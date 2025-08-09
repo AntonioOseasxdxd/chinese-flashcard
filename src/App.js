@@ -8,6 +8,7 @@ import Header from './components/Header';
 import Navigation from './components/Navigation';
 import CardManager from './components/CardManager';
 import DataInitializer from './components/DataInitializer';
+import ClearDataButton from './components/ClearDataButton'; // NUEVO
 
 // Pages
 import Home from './pages/Home';
@@ -30,6 +31,7 @@ function App() {
     difficulty: 'medium'
   });
   const [showDataInitializer, setShowDataInitializer] = useState(false);
+  const [showClearData, setShowClearData] = useState(false); // NUEVO
 
   // Usar el hook de Firebase para manejar tarjetas
   const {
@@ -107,6 +109,13 @@ function App() {
     } catch (error) {
       console.error('Manual sync failed:', error);
     }
+  };
+
+  // NUEVO: Manejar limpieza de datos
+  const handleDataCleared = () => {
+    console.log('All data cleared!');
+    setShowClearData(false);
+    // La página se recargará automáticamente
   };
 
   // Mostrar loading inicial
@@ -208,12 +217,33 @@ function App() {
             >
               ⚙️ Config
             </button>
+
+            {/* NUEVO: Botón para mostrar limpiador de datos */}
+            <button
+              onClick={() => setShowClearData(!showClearData)}
+              style={{
+                padding: '4px 8px',
+                fontSize: '11px',
+                backgroundColor: showClearData ? '#dc3545' : 'transparent',
+                color: showClearData ? 'white' : 'currentColor',
+                border: '1px solid currentColor',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              🗑️ Clear
+            </button>
           </div>
         </div>
 
         {/* Mostrar inicializador de datos si está activado */}
         {showDataInitializer && (
           <DataInitializer onInitComplete={() => setShowDataInitializer(false)} />
+        )}
+
+        {/* NUEVO: Mostrar limpiador de datos si está activado */}
+        {showClearData && (
+          <ClearDataButton onDataCleared={handleDataCleared} />
         )}
 
         <main className="main-content">
