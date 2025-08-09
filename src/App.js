@@ -6,7 +6,8 @@ import './App.css';
 // Components
 import Header from './components/Header';
 import Navigation from './components/Navigation';
-import CardManager from './components/CardManager'; // Nuevo componente
+import CardManager from './components/CardManager';
+import DataInitializer from './components/DataInitializer';
 
 // Pages
 import Home from './pages/Home';
@@ -14,74 +15,53 @@ import Practice from './pages/Practice';
 import Progress from './pages/Progress';
 import Settings from './pages/Settings';
 
+// Hooks
+import { useFlashcards } from './hooks/useFlashcards';
+
 // Services
 import { OfflineStorage } from './services/offlineStorage';
-import { SpacedRepetition } from './services/spacedRepetition';
-import { initialCards } from './data/initialCards';
 
 function App() {
   const [user, setUser] = useState(null);
-  const [cards, setCards] = useState([]);
-  const [userProgress, setUserProgress] = useState({});
   const [settings, setSettings] = useState({
     soundEnabled: true,
     dailyGoal: 20,
     showPinyin: true,
     difficulty: 'medium'
   });
+  const [showDataInitializer, setShowDataInitializer] = useState(false);
 
-  // Cargar datos al iniciar la app
+  // Usar el hook de Firebase para manejar tarjetas
+  const {
+    cards,
+    progress: userProgress,
+    loading,
+    syncing,
+    isOnline,
+    addCard,
+    updateCard,
+    deleteCard,
+    updateProgress: updateUserProgress,
+    markCardReviewed,
+    syncWithFirebase,
+    getCardsByCategory,
+    getCardsForReview,
+    getStats
+  } = useFlashcards();
+
+  // Cargar configuraciones al iniciar
   useEffect(() => {
-    loadInitialData();
+    loadSettings();
   }, []);
 
-  const loadInitialData = async () => {
+  const loadSettings = async () => {
     try {
-      console.log('Loading initial data...');
-      
-      // Cargar cartas desde almacenamiento local o usar cartas iniciales
-      let loadedCards = await OfflineStorage.getCards();
-      if (!loadedCards || loadedCards.length === 0) {
-        loadedCards = initialCards;
-        await OfflineStorage.saveCards(loadedCards);
-      }
-      setCards(loadedCards);
-
-      // Cargar progreso del usuario
-      const progress = await OfflineStorage.getProgress();
-      setUserProgress(progress || {});
-
-      // Cargar configuraciones
       const savedSettings = await OfflineStorage.getSettings();
       if (savedSettings) {
         setSettings(prev => ({ ...prev, ...savedSettings }));
       }
-
-      console.log(`Loaded ${loadedCards.length} cards`);
     } catch (error) {
-      console.error('Error loading data:', error);
-    }
-  };
-
-  const updateUserProgress = async (cardId, progressData) => {
-    try {
-      // Actualizar progreso en el estado
-      const newProgress = {
-        ...userProgress,
-        [cardId]: {
-          ...userProgress[cardId],
-          ...progressData
-        }
-      };
-      
-      setUserProgress(newProgress);
-      
-      // Guardar en almacenamiento local
-      await OfflineStorage.saveProgress(newProgress);
-      
-      console.log(`Updated progress for card ${cardId}:`, progressData);
-    } catch (error) {
-      console.error('Error updating progress:', error);
+      console.error('Error loading settings:', error);
     }
   };
 
@@ -89,111 +69,220 @@ function App() {
     try {
       const updatedSettings = { ...settings, ...newSettings };
       setSettings(updatedSettings);
-      
+
       // Guardar en almacenamiento local
       await OfflineStorage.saveSettings(updatedSettings);
-      
+
       console.log('Settings updated:', newSettings);
     } catch (error) {
       console.error('Error updating settings:', error);
     }
   };
 
-  // NUEVAS FUNCIONES PARA GESTIONAR TARJETAS
-  const addCard = async (newCard) => {
+  // Función mejorada para actualizar progreso
+  const handleUpdateProgress = async (cardId, progressData) => {
     try {
-      const updatedCards = [...cards, newCard];
-      setCards(updatedCards);
-      
-      // Guardar en almacenamiento local
-      await OfflineStorage.saveCards(updatedCards);
-      
-      console.log('Card added:', newCard);
+      await updateUserProgress(cardId, progressData);
+      console.log(`Updated progress for card ${cardId}:`, progressData);
     } catch (error) {
-      console.error('Error adding card:', error);
+      console.error('Error updating progress:', error);
     }
   };
 
-  const deleteCard = async (cardId) => {
+  // Función para marcar carta como revisada con resultado
+  const handleMarkCardReviewed = async (cardId, correct = true, difficulty = null) => {
     try {
-      const updatedCards = cards.filter(card => card.id !== cardId);
-      setCards(updatedCards);
-      
-      // También eliminar el progreso de esa carta
-      const updatedProgress = { ...userProgress };
-      delete updatedProgress[cardId];
-      setUserProgress(updatedProgress);
-      
-      // Guardar en almacenamiento local
-      await OfflineStorage.saveCards(updatedCards);
-      await OfflineStorage.saveProgress(updatedProgress);
-      
-      console.log('Card deleted:', cardId);
+      await markCardReviewed(cardId, correct, difficulty);
+      console.log(`Card ${cardId} marked as ${correct ? 'correct' : 'incorrect'}`);
     } catch (error) {
-      console.error('Error deleting card:', error);
+      console.error('Error marking card as reviewed:', error);
     }
   };
+
+  // Función para manejar sincronización manual
+  const handleManualSync = async () => {
+    try {
+      await syncWithFirebase();
+      console.log('Manual sync completed');
+    } catch (error) {
+      console.error('Manual sync failed:', error);
+    }
+  };
+
+  // Mostrar loading inicial
+  if (loading) {
+    return (
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
+        height: '100vh',
+        backgroundColor: '#f8f9fa'
+      }}>
+        <div style={{
+          fontSize: '48px',
+          marginBottom: '20px'
+        }}>
+          🏮
+        </div>
+        <h2 style={{ color: '#495057', marginBottom: '10px' }}>
+          Cargando Chinese Flashcards
+        </h2>
+        <p style={{ color: '#6c757d' }}>
+          Sincronizando tus datos...
+        </p>
+        <div style={{
+          width: '50px',
+          height: '50px',
+          border: '4px solid #f3f3f3',
+          borderTop: '4px solid #007bff',
+          borderRadius: '50%',
+          animation: 'spin 1s linear infinite'
+        }}></div>
+        <style>{`
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
 
   return (
     <Router>
       <div className="app">
         <Header />
-        
+
+        {/* Indicador de estado de conexión y sincronización */}
+        <div style={{
+          padding: '8px 20px',
+          backgroundColor: isOnline ? '#d4edda' : '#f8d7da',
+          color: isOnline ? '#155724' : '#721c24',
+          fontSize: '12px',
+          textAlign: 'center',
+          borderBottom: '1px solid #dee2e6',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <span>
+            {isOnline ? '🟢 Conectado' : '🔴 Sin conexión'} 
+            {syncing && ' • ⏳ Sincronizando...'}
+          </span>
+          
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <span style={{ fontSize: '11px' }}>
+              📚 {cards.length} cartas • 🎯 {getStats().cardsForReview} pendientes
+            </span>
+            
+            {isOnline && (
+              <button
+                onClick={handleManualSync}
+                disabled={syncing}
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  backgroundColor: 'transparent',
+                  border: '1px solid currentColor',
+                  borderRadius: '4px',
+                  cursor: syncing ? 'not-allowed' : 'pointer',
+                  opacity: syncing ? 0.6 : 1
+                }}
+              >
+                {syncing ? '⏳' : '🔄'} Sync
+              </button>
+            )}
+            
+            <button
+              onClick={() => setShowDataInitializer(!showDataInitializer)}
+              style={{
+                padding: '4px 8px',
+                fontSize: '11px',
+                backgroundColor: 'transparent',
+                border: '1px solid currentColor',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              ⚙️ Config
+            </button>
+          </div>
+        </div>
+
+        {/* Mostrar inicializador de datos si está activado */}
+        {showDataInitializer && (
+          <DataInitializer onInitComplete={() => setShowDataInitializer(false)} />
+        )}
+
         <main className="main-content">
           <Routes>
-            <Route 
-              path="/" 
+            <Route
+              path="/"
               element={
-                <Home 
+                <Home
                   cards={cards}
                   userProgress={userProgress}
                   settings={settings}
+                  stats={getStats()}
+                  cardsForReview={getCardsForReview()}
                 />
-              } 
+              }
             />
-            <Route 
-              path="/practice" 
+            <Route
+              path="/practice"
               element={
-                <Practice 
+                <Practice
                   cards={cards}
                   userProgress={userProgress}
-                  updateProgress={updateUserProgress}
+                  updateProgress={handleUpdateProgress}
+                  markCardReviewed={handleMarkCardReviewed}
                   settings={settings}
+                  cardsForReview={getCardsForReview()}
                 />
-              } 
+              }
             />
-            <Route 
-              path="/progress" 
+            <Route
+              path="/progress"
               element={
-                <Progress 
+                <Progress
                   cards={cards}
                   userProgress={userProgress}
+                  stats={getStats()}
+                  getCardsByCategory={getCardsByCategory}
                 />
-              } 
+              }
             />
-            <Route 
-              path="/settings" 
+            <Route
+              path="/settings"
               element={
-                <Settings 
+                <Settings
                   settings={settings}
                   updateSettings={updateSettings}
+                  isOnline={isOnline}
+                  syncing={syncing}
+                  onManualSync={handleManualSync}
+                  stats={getStats()}
                 />
               } 
             />
-            {/* NUEVA RUTA PARA GESTIONAR TARJETAS */}
-            <Route 
-              path="/cards" 
+            <Route
+              path="/cards"
               element={
-                <CardManager 
+                <CardManager
                   cards={cards}
-                  onAddCard={addCard}
-                  onDeleteCard={deleteCard}
+                  onAddCard={(newCard) => addCard(newCard)}
+                  onDeleteCard={(cardId) => deleteCard(cardId)}
+                  onUpdateCard={(cardId, updates) => updateCard(cardId, updates)}
+                  isOnline={isOnline}
+                  syncing={syncing}
                 />
-              } 
+              }
             />
           </Routes>
         </main>
-        
+
         <Navigation />
       </div>
     </Router>
