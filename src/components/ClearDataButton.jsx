@@ -175,7 +175,7 @@ const ClearDataButton = ({ onDataCleared }) => {
       <div style={{
         marginTop: '15px',
         fontSize: '12px',
-        color: '#856404',
+        color: '#856405',
         lineHeight: '1.4'
       }}>
         <p><strong>⚠️ ADVERTENCIA:</strong> Esto eliminará las 20 flashcards predeterminadas y todas las que hayas creado.</p>
