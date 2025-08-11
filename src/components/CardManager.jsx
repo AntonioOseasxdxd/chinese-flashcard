@@ -1,8 +1,9 @@
 // src/components/CardManager.jsx
 import { useState } from 'react';
 
-const CardManager = ({ cards, onAddCard, onDeleteCard }) => {
+const CardManager = ({ cards, onAddCard, onDeleteCard, onEditCard }) => {
   const [showForm, setShowForm] = useState(false);
+  const [editingCard, setEditingCard] = useState(null);
   const [newCard, setNewCard] = useState({
     chinese: '',
     pinyin: '',
@@ -88,21 +89,44 @@ const CardManager = ({ cards, onAddCard, onDeleteCard }) => {
         break;
     }
 
-    const card = {
-      id: Date.now(),
-      ...newCard,
-      createdAt: new Date(),
-      lastReviewed: null,
-      nextReview: new Date(),
-      interval: 1,
-      easeFactor: 2.5,
-      repetitions: 0,
-      isNew: true
-    };
+    if (editingCard) {
+      // Editar tarjeta existente
+      const updatedCard = {
+        ...editingCard,
+        ...newCard,
+        // Mantener los datos de revisión existentes
+        id: editingCard.id,
+        createdAt: editingCard.createdAt,
+        lastReviewed: editingCard.lastReviewed,
+        nextReview: editingCard.nextReview,
+        interval: editingCard.interval,
+        easeFactor: editingCard.easeFactor,
+        repetitions: editingCard.repetitions,
+        isNew: editingCard.isNew
+      };
 
-    onAddCard(card);
+      onEditCard(updatedCard);
+      alert('¡Tarjeta editada exitosamente!');
+      setEditingCard(null);
+    } else {
+      // Crear nueva tarjeta
+      const card = {
+        id: Date.now(),
+        ...newCard,
+        createdAt: new Date(),
+        lastReviewed: null,
+        nextReview: new Date(),
+        interval: 1,
+        easeFactor: 2.5,
+        repetitions: 0,
+        isNew: true
+      };
+
+      onAddCard(card);
+      alert('¡Tarjeta agregada exitosamente!');
+    }
     
-    // Limpiar formulario
+    // Limpiar formulario pero no cerrarlo automáticamente
     setNewCard({
       chinese: '',
       pinyin: '',
@@ -116,9 +140,6 @@ const CardManager = ({ cards, onAddCard, onDeleteCard }) => {
       wrongOption1: '',
       wrongOption2: ''
     });
-    
-    setShowForm(false);
-    alert('¡Tarjeta agregada exitosamente!');
   };
 
   const handleChange = (e) => {
@@ -133,6 +154,42 @@ const CardManager = ({ cards, onAddCard, onDeleteCard }) => {
     if (window.confirm('¿Estás seguro de que quieres eliminar esta tarjeta?')) {
       onDeleteCard(cardId);
     }
+  };
+
+  const handleEdit = (card) => {
+    setEditingCard(card);
+    setNewCard({
+      chinese: card.chinese || '',
+      pinyin: card.pinyin || '',
+      english: card.english || '',
+      difficulty: card.difficulty || 'easy',
+      category: card.category || 'custom',
+      cardType: card.cardType || 'basic',
+      imageUrl: card.imageUrl || '',
+      audioUrl: card.audioUrl || '',
+      correctOption: card.correctOption || '',
+      wrongOption1: card.wrongOption1 || '',
+      wrongOption2: card.wrongOption2 || ''
+    });
+    setShowForm(true);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingCard(null);
+    setShowForm(false);
+    setNewCard({
+      chinese: '',
+      pinyin: '',
+      english: '',
+      difficulty: 'easy',
+      category: 'custom',
+      cardType: 'basic',
+      imageUrl: '',
+      audioUrl: '',
+      correctOption: '',
+      wrongOption1: '',
+      wrongOption2: ''
+    });
   };
 
   const getCardTypeIcon = (cardType) => {
@@ -499,7 +556,7 @@ const CardManager = ({ cards, onAddCard, onDeleteCard }) => {
             transition: 'all 0.2s ease'
           }}
         >
-          {showForm ? '❌ Cancelar' : '➕ Agregar Tarjeta'}
+          {showForm ? '❌ Cerrar' : '➕ Agregar Tarjeta'}
         </button>
       </div>
 
@@ -516,7 +573,7 @@ const CardManager = ({ cards, onAddCard, onDeleteCard }) => {
           }}
         >
           <h3 style={{ marginTop: 0, color: '#495057', marginBottom: '20px' }}>
-            Nueva Tarjeta
+            {editingCard ? '✏️ Editar Tarjeta' : '➕ Nueva Tarjeta'}
           </h3>
 
           {/* Selector de tipo de tarjeta */}
@@ -605,23 +662,45 @@ const CardManager = ({ cards, onAddCard, onDeleteCard }) => {
             </div>
           </div>
 
-          <button
-            type="submit"
-            style={{
-              backgroundColor: '#28a745',
-              color: 'white',
-              border: 'none',
-              padding: '15px 40px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontSize: '16px',
-              fontWeight: 'bold',
-              boxShadow: '0 4px 15px rgba(40, 167, 69, 0.3)',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            💾 Guardar Tarjeta
-          </button>
+          <div style={{ display: 'flex', gap: '15px' }}>
+            <button
+              type="submit"
+              style={{
+                backgroundColor: editingCard ? '#ffc107' : '#28a745',
+                color: editingCard ? '#000' : 'white',
+                border: 'none',
+                padding: '15px 40px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '16px',
+                fontWeight: 'bold',
+                boxShadow: editingCard ? '0 4px 15px rgba(255, 193, 7, 0.3)' : '0 4px 15px rgba(40, 167, 69, 0.3)',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              {editingCard ? '✏️ Actualizar Tarjeta' : '💾 Guardar Tarjeta'}
+            </button>
+
+            {editingCard && (
+              <button
+                type="button"
+                onClick={handleCancelEdit}
+                style={{
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  padding: '15px 40px',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                ❌ Cancelar Edición
+              </button>
+            )}
+          </div>
         </form>
       )}
 
@@ -706,23 +785,43 @@ const CardManager = ({ cards, onAddCard, onDeleteCard }) => {
                   )}
                 </div>
                 
-                <button
-                  onClick={() => handleDelete(card.id)}
-                  style={{
-                    backgroundColor: '#dc3545',
-                    color: 'white',
-                    border: 'none',
-                    padding: '10px 15px',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    fontWeight: 'bold',
-                    transition: 'all 0.2s ease'
-                  }}
-                  title="Eliminar tarjeta"
-                >
-                  🗑️ Eliminar
-                </button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={() => handleEdit(card)}
+                    style={{
+                      backgroundColor: '#ffc107',
+                      color: '#000',
+                      border: 'none',
+                      padding: '10px 15px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      transition: 'all 0.2s ease'
+                    }}
+                    title="Editar tarjeta"
+                  >
+                    ✏️ Editar
+                  </button>
+                  
+                  <button
+                    onClick={() => handleDelete(card.id)}
+                    style={{
+                      backgroundColor: '#dc3545',
+                      color: 'white',
+                      border: 'none',
+                      padding: '10px 15px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      transition: 'all 0.2s ease'
+                    }}
+                    title="Eliminar tarjeta"
+                  >
+                    🗑️ Eliminar
+                  </button>
+                </div>
               </div>
             ))}
           </div>

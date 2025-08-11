@@ -298,18 +298,18 @@ function App() {
               } 
             />
             <Route
-              path="/cards"
-              element={
-                <CardManager
-                  cards={cards}
-                  onAddCard={(newCard) => addCard(newCard)}
-                  onDeleteCard={(cardId) => deleteCard(cardId)}
-                  onUpdateCard={(cardId, updates) => updateCard(cardId, updates)}
-                  isOnline={isOnline}
-                  syncing={syncing}
-                />
-              }
-            />
+  path="/cards"
+  element={
+    <CardManager
+      cards={cards}
+      onAddCard={(newCard) => addCard(newCard)}
+      onDeleteCard={(cardId) => deleteCard(cardId)}
+      onEditCard={(updatedCard) => updateCard(updatedCard.id, updatedCard)} // ✅ CORRECTO
+      isOnline={isOnline}
+      syncing={syncing}
+    />
+  }
+/>
           </Routes>
         </main>
 
