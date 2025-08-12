@@ -1,16 +1,40 @@
-// src/components/Navigation.jsx
+// src/components/Navigation.js
+import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
 const Navigation = () => {
   const location = useLocation();
-
+  
   const navItems = [
-    { path: '/', icon: '🏠', label: 'Inicio' },
-    { path: '/practice', icon: '📚', label: 'Practicar' },
-    { path: '/progress', icon: '📊', label: 'Progreso' },
-    { path: '/cards', icon: '📝', label: 'Tarjetas' }, // NUEVO
-    { path: '/settings', icon: '⚙️', label: 'Config' }
+    {
+      path: '/',
+      icon: '🏠',
+      label: 'Inicio',
+      exact: true
+    },
+    {
+      path: '/practice',
+      icon: '🎯',
+      label: 'Práctica'
+    },
+    {
+      path: '/cards',
+      icon: '📝',
+      label: 'Cartas'
+    },
+    {
+      path: '/settings',
+      icon: '⚙️',
+      label: 'Config'
+    }
   ];
+
+  const isActive = (path, exact = false) => {
+    if (exact) {
+      return location.pathname === path;
+    }
+    return location.pathname.startsWith(path);
+  };
 
   return (
     <nav style={{
@@ -19,16 +43,17 @@ const Navigation = () => {
       left: 0,
       right: 0,
       backgroundColor: 'white',
-      borderTop: '1px solid #e0e0e0',
+      borderTop: '1px solid #dee2e6',
       padding: '8px 0',
-      zIndex: 1000
+      zIndex: 100,
+      boxShadow: '0 -2px 10px rgba(0,0,0,0.1)'
     }}>
       <div style={{
-        display: 'flex',
-        justifyContent: 'space-around',
-        alignItems: 'center',
-        maxWidth: '500px',
-        margin: '0 auto'
+        display: 'grid',
+        gridTemplateColumns: `repeat(${navItems.length}, 1fr)`,
+        maxWidth: '600px',
+        margin: '0 auto',
+        gap: '4px'
       }}>
         {navItems.map((item) => (
           <Link
@@ -38,20 +63,25 @@ const Navigation = () => {
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              padding: '8px',
-              borderRadius: '8px',
+              padding: '8px 4px',
               textDecoration: 'none',
-              backgroundColor: location.pathname === item.path ? '#e3f2fd' : 'transparent',
-              color: location.pathname === item.path ? '#1976d2' : '#666',
-              transition: 'all 0.2s ease'
+              color: isActive(item.path, item.exact) ? '#007bff' : '#6c757d',
+              backgroundColor: isActive(item.path, item.exact) ? '#f0f8ff' : 'transparent',
+              borderRadius: '8px',
+              transition: 'all 0.2s ease',
+              fontSize: '10px',
+              fontWeight: isActive(item.path, item.exact) ? '600' : '400'
             }}
           >
-            <span style={{ fontSize: '20px', marginBottom: '2px' }}>
+            <div style={{ 
+              fontSize: '18px', 
+              marginBottom: '2px',
+              transform: isActive(item.path, item.exact) ? 'scale(1.1)' : 'scale(1)',
+              transition: 'transform 0.2s ease'
+            }}>
               {item.icon}
-            </span>
-            <span style={{ fontSize: '10px', fontWeight: '500' }}>
-              {item.label}
-            </span>
+            </div>
+            <span>{item.label}</span>
           </Link>
         ))}
       </div>

@@ -1,14 +1,30 @@
-// src/hooks/useFlashcards.js
+// src/hooks/useFlashcards.js - EJEMPLO DE INTEGRACIÓN CORREGIDA
 import { useState, useEffect, useCallback } from 'react';
-import { FirebaseSync } from '../services/firebaseSync';
+import { useDecks } from './useDecks';
+import { SpacedRepetition } from '../services/spacedRepetition';
 import { OfflineStorage } from '../services/offlineStorage';
+import { FirebaseSync } from '../services/firebaseSync';
 
 export const useFlashcards = () => {
+  // Estados principales
   const [cards, setCards] = useState([]);
   const [progress, setProgress] = useState({});
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // Usar hook de mazos
+  const {
+    decks,
+    currentDeck,
+    loading: decksLoading,
+    addDeck,
+    updateDeck,
+    deleteDeck,
+    switchDeck,
+    getDeckById,
+    getDecksWithStats
+  } = useDecks();
 
   // Monitorear estado de conexión
   useEffect(() => {
@@ -29,233 +45,332 @@ export const useFlashcards = () => {
     loadInitialData();
   }, []);
 
-  // Sincronizar cuando vuelva la conexión
-  useEffect(() => {
-    if (isOnline) {
-      syncWithFirebase();
-    }
-  }, [isOnline]);
-
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      // Inicializar usuario en Firebase
-      await FirebaseSync.initializeUser();
-
-      // Cargar cartas
-      const loadedCards = await FirebaseSync.getCards();
-      const loadedProgress = await FirebaseSync.getProgress();
+      // Cargar tarjetas y progreso
+      const [loadedCards, loadedProgress] = await Promise.all([
+        loadCards(),
+        loadProgress()
+      ]);
 
       setCards(loadedCards || []);
       setProgress(loadedProgress || {});
-
-      console.log('Initial data loaded:', { 
-        cardsCount: loadedCards?.length || 0, 
-        progressKeys: Object.keys(loadedProgress || {}).length 
-      });
     } catch (error) {
       console.error('Error loading initial data:', error);
-      
-      // Fallback a datos locales
-      const localCards = await OfflineStorage.getCards();
-      const localProgress = await OfflineStorage.getProgress();
-      
-      setCards(localCards || []);
-      setProgress(localProgress || {});
+      setCards([]);
+      setProgress({});
     } finally {
       setLoading(false);
     }
   };
 
-  const syncWithFirebase = async () => {
+  const loadCards = async () => {
+    try {
+      // Intentar cargar desde Firebase primero si está online
+      if (isOnline) {
+        const firebaseCards = await FirebaseSync.getCards();
+        if (firebaseCards && firebaseCards.length > 0) {
+          await OfflineStorage.saveCards(firebaseCards);
+          return firebaseCards;
+        }
+      }
+
+      // Cargar desde almacenamiento local
+      return await OfflineStorage.getCards();
+    } catch (error) {
+      console.error('Error loading cards:', error);
+      return [];
+    }
+  };
+
+  const loadProgress = async () => {
+    try {
+      // Intentar cargar desde Firebase primero si está online
+      if (isOnline) {
+        const firebaseProgress = await FirebaseSync.getProgress();
+        if (firebaseProgress) {
+          await OfflineStorage.saveProgress(firebaseProgress);
+          return firebaseProgress;
+        }
+      }
+
+      // Cargar desde almacenamiento local
+      return await OfflineStorage.getProgress();
+    } catch (error) {
+      console.error('Error loading progress:', error);
+      return {};
+    }
+  };
+
+  // Funciones CRUD para tarjetas
+  const addCard = useCallback(async (newCard) => {
+    try {
+      const cardWithId = {
+        ...newCard,
+        id: `card_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        createdAt: new Date().toISOString(),
+        lastReviewed: null,
+        nextReview: new Date().toISOString(),
+        interval: 1,
+        easeFactor: 2.5,
+        repetitions: 0,
+        isNew: true
+      };
+
+      const updatedCards = [...cards, cardWithId];
+      setCards(updatedCards);
+
+      // Guardar localmente
+      await OfflineStorage.saveCards(updatedCards);
+
+      // Sincronizar con Firebase si está online
+      if (isOnline) {
+        try {
+          await FirebaseSync.syncCards(updatedCards);
+        } catch (error) {
+          console.warn('Failed to sync with Firebase:', error);
+        }
+      }
+
+      return cardWithId;
+    } catch (error) {
+      console.error('Error adding card:', error);
+      throw error;
+    }
+  }, [cards, isOnline]);
+
+  const updateCard = useCallback(async (cardId, updates) => {
+    try {
+      const updatedCards = cards.map(card =>
+        card.id === cardId
+          ? { ...card, ...updates, updatedAt: new Date().toISOString() }
+          : card
+      );
+
+      setCards(updatedCards);
+
+      // Guardar localmente
+      await OfflineStorage.saveCards(updatedCards);
+
+      // Sincronizar con Firebase si está online
+      if (isOnline) {
+        try {
+          await FirebaseSync.syncCards(updatedCards);
+        } catch (error) {
+          console.warn('Failed to sync with Firebase:', error);
+        }
+      }
+
+      return updatedCards.find(card => card.id === cardId);
+    } catch (error) {
+      console.error('Error updating card:', error);
+      throw error;
+    }
+  }, [cards, isOnline]);
+
+  const deleteCard = useCallback(async (cardId) => {
+    try {
+      const updatedCards = cards.filter(card => card.id !== cardId);
+      setCards(updatedCards);
+
+      // Guardar localmente
+      await OfflineStorage.saveCards(updatedCards);
+
+      // Sincronizar con Firebase si está online
+      if (isOnline) {
+        try {
+          await FirebaseSync.syncCards(updatedCards);
+        } catch (error) {
+          console.warn('Failed to sync with Firebase:', error);
+        }
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error deleting card:', error);
+      throw error;
+    }
+  }, [cards, isOnline]);
+
+  // Funciones de progreso
+  const updateProgress = useCallback(async (cardId, progressData) => {
+    try {
+      const updatedProgress = {
+        ...progress,
+        [cardId]: {
+          ...progress[cardId],
+          ...progressData,
+          lastUpdated: new Date().toISOString()
+        }
+      };
+
+      setProgress(updatedProgress);
+
+      // Guardar localmente
+      await OfflineStorage.saveProgress(updatedProgress);
+
+      // Sincronizar con Firebase si está online
+      if (isOnline) {
+        try {
+          await FirebaseSync.syncProgress(updatedProgress);
+        } catch (error) {
+          console.warn('Failed to sync progress with Firebase:', error);
+        }
+      }
+    } catch (error) {
+      console.error('Error updating progress:', error);
+      throw error;
+    }
+  }, [progress, isOnline]);
+
+  const markCardReviewed = useCallback(async (cardId, correct = true, difficulty = null) => {
+    try {
+      const card = cards.find(c => c.id === cardId);
+      if (!card) return;
+
+      const currentProgress = progress[cardId] || { correct: 0, incorrect: 0, reviewCount: 0 };
+      
+      // Usar SpacedRepetition para calcular el nuevo intervalo
+      const spaceData = SpacedRepetition.calculateNextReview(
+        card,
+        currentProgress,
+        correct,
+        difficulty
+      );
+
+      const updatedProgressData = {
+        ...currentProgress,
+        correct: currentProgress.correct + (correct ? 1 : 0),
+        incorrect: currentProgress.incorrect + (correct ? 0 : 1),
+        reviewCount: currentProgress.reviewCount + 1,
+        lastReviewed: new Date().toISOString(),
+        ...spaceData
+      };
+
+      await updateProgress(cardId, updatedProgressData);
+
+      // También actualizar la tarjeta con los nuevos datos
+      await updateCard(cardId, {
+        lastReviewed: new Date().toISOString(),
+        nextReview: spaceData.nextReview,
+        interval: spaceData.interval,
+        easeFactor: spaceData.easeFactor,
+        repetitions: spaceData.repetitions,
+        isNew: false
+      });
+
+    } catch (error) {
+      console.error('Error marking card as reviewed:', error);
+      throw error;
+    }
+  }, [cards, progress, updateProgress, updateCard]);
+
+  // Funciones de utilidad
+  const getCurrentDeckCards = useCallback(() => {
+    if (!currentDeck) return cards;
+    return cards.filter(card => card.deckId === currentDeck.id);
+  }, [cards, currentDeck]);
+
+  const getCardsForReview = useCallback((deckId = null) => {
+    const targetCards = deckId 
+      ? cards.filter(card => card.deckId === deckId)
+      : getCurrentDeckCards();
+
+    return SpacedRepetition.getCardsForReview(targetCards, progress);
+  }, [cards, progress, getCurrentDeckCards]);
+
+  const getStats = useCallback(() => {
+    const targetCards = getCurrentDeckCards();
+    return SpacedRepetition.getLearningStats(targetCards, progress);
+  }, [getCurrentDeckCards, progress]);
+
+  const getGlobalStats = useCallback(() => {
+    return SpacedRepetition.getLearningStats(cards, progress);
+  }, [cards, progress]);
+
+  const getCardsByCategory = useCallback(() => {
+    // Implementar lógica de categorización si es necesaria
+    return {
+      easy: cards.filter(card => card.difficulty === 'easy'),
+      medium: cards.filter(card => card.difficulty === 'medium'),
+      hard: cards.filter(card => card.difficulty === 'hard')
+    };
+  }, [cards]);
+
+  // Función de sincronización manual
+  const syncWithFirebase = useCallback(async () => {
     if (!isOnline) return;
     
     setSyncing(true);
     try {
-      const result = await FirebaseSync.forcSync();
-      if (result.success) {
-        setCards(result.cards || []);
-        setProgress(result.progress || {});
-        console.log('Sync completed successfully');
-      }
+      await Promise.all([
+        FirebaseSync.syncCards(cards),
+        FirebaseSync.syncProgress(progress)
+      ]);
     } catch (error) {
-      console.error('Sync failed:', error);
+      console.error('Error syncing with Firebase:', error);
+      throw error;
     } finally {
       setSyncing(false);
     }
-  };
-
-  // Agregar nueva carta
-  const addCard = useCallback(async (newCard) => {
-    const cardWithId = {
-      ...newCard,
-      id: Date.now().toString(),
-      createdAt: new Date().toISOString(),
-      lastReviewed: null,
-      reviewCount: 0,
-      difficulty: 'medium'
-    };
-
-    const updatedCards = [...cards, cardWithId];
-    setCards(updatedCards);
-
-    // Sincronizar con Firebase
-    if (isOnline) {
-      await FirebaseSync.syncCards(updatedCards);
-    } else {
-      // Guardar localmente si no hay internet
-      await OfflineStorage.saveCards(updatedCards);
-    }
-
-    return cardWithId;
-  }, [cards, isOnline]);
-
-  // Actualizar carta existente
-  const updateCard = useCallback(async (cardId, updates) => {
-    const updatedCards = cards.map(card => 
-      card.id === cardId 
-        ? { ...card, ...updates, updatedAt: new Date().toISOString() }
-        : card
-    );
-
-    setCards(updatedCards);
-
-    // Sincronizar con Firebase
-    if (isOnline) {
-      await FirebaseSync.syncCards(updatedCards);
-    } else {
-      await OfflineStorage.saveCards(updatedCards);
-    }
-
-    return updatedCards.find(card => card.id === cardId);
-  }, [cards, isOnline]);
-
-  // Eliminar carta
-  const deleteCard = useCallback(async (cardId) => {
-    const updatedCards = cards.filter(card => card.id !== cardId);
-    setCards(updatedCards);
-
-    // Sincronizar con Firebase
-    if (isOnline) {
-      await FirebaseSync.syncCards(updatedCards);
-    } else {
-      await OfflineStorage.saveCards(updatedCards);
-    }
-
-    // También eliminar progreso de esa carta
-    const updatedProgress = { ...progress };
-    delete updatedProgress[cardId];
-    setProgress(updatedProgress);
-
-    if (isOnline) {
-      await FirebaseSync.syncProgress(updatedProgress);
-    } else {
-      await OfflineStorage.saveProgress(updatedProgress);
-    }
   }, [cards, progress, isOnline]);
 
-  // Actualizar progreso de una carta
-  const updateProgress = useCallback(async (cardId, progressData) => {
-    const updatedProgress = {
-      ...progress,
-      [cardId]: {
-        ...progress[cardId],
-        ...progressData,
-        lastUpdated: new Date().toISOString()
-      }
-    };
-
-    setProgress(updatedProgress);
-
-    // Sincronizar con Firebase
-    if (isOnline) {
-      await FirebaseSync.syncProgress(updatedProgress);
-    } else {
-      await OfflineStorage.saveProgress(updatedProgress);
+  // Funciones de manejo de mazos (para compatibilidad con CardManager)
+  const moveCardToDeck = useCallback(async (cardId, deckId) => {
+    const targetDeck = getDeckById(deckId);
+    if (!targetDeck) {
+      throw new Error('Deck not found');
     }
-  }, [progress, isOnline]);
 
-  // Marcar carta como revisada
-  const markCardReviewed = useCallback(async (cardId, correct = true, difficulty = null) => {
-    // Actualizar la carta
     await updateCard(cardId, {
-      lastReviewed: new Date().toISOString(),
-      reviewCount: (cards.find(c => c.id === cardId)?.reviewCount || 0) + 1
+      deckId: deckId,
+      deckName: targetDeck.name
     });
+  }, [updateCard, getDeckById]);
 
-    // Actualizar progreso
-    const currentProgress = progress[cardId] || { correct: 0, incorrect: 0, streak: 0 };
-    
-    const newProgress = {
-      ...currentProgress,
-      correct: currentProgress.correct + (correct ? 1 : 0),
-      incorrect: currentProgress.incorrect + (correct ? 0 : 1),
-      streak: correct ? (currentProgress.streak || 0) + 1 : 0,
-      lastResult: correct,
-      difficulty: difficulty || currentProgress.difficulty
-    };
-
-    await updateProgress(cardId, newProgress);
-  }, [cards, progress, updateCard, updateProgress]);
-
-  // Obtener cartas por categoría
-  const getCardsByCategory = useCallback((category) => {
-    return cards.filter(card => card.category === category);
-  }, [cards]);
-
-  // Obtener cartas que necesitan revisión
-  const getCardsForReview = useCallback(() => {
-    const now = new Date();
-    return cards.filter(card => {
-      if (!card.lastReviewed) return true;
-      
-      const lastReview = new Date(card.lastReviewed);
-      const daysSinceReview = (now - lastReview) / (1000 * 60 * 60 * 24);
-      
-      // Lógica simple de repetición espaciada
-      const reviewInterval = Math.min(30, Math.pow(2, card.reviewCount || 0));
-      return daysSinceReview >= reviewInterval;
-    });
-  }, [cards]);
-
-  // Estadísticas
-  const getStats = useCallback(() => {
-    const totalCards = cards.length;
-    const reviewedCards = Object.keys(progress).length;
-    const correctAnswers = Object.values(progress).reduce((sum, p) => sum + p.correct, 0);
-    const totalAnswers = Object.values(progress).reduce((sum, p) => sum + p.correct + p.incorrect, 0);
-    
-    return {
-      totalCards,
-      reviewedCards,
-      correctAnswers,
-      totalAnswers,
-      accuracy: totalAnswers > 0 ? (correctAnswers / totalAnswers * 100).toFixed(1) : 0,
-      cardsForReview: getCardsForReview().length
-    };
-  }, [cards, progress, getCardsForReview]);
+  const deleteCardsFromDeck = useCallback(async (deckId) => {
+    const deckCards = cards.filter(card => card.deckId === deckId);
+    await Promise.all(deckCards.map(card => deleteCard(card.id)));
+  }, [cards, deleteCard]);
 
   return {
-    // Estado
+    // Estados
     cards,
     progress,
-    loading,
+    loading: loading || decksLoading,
     syncing,
     isOnline,
-    
-    // Acciones
+
+    // Estados de mazos
+    decks,
+    currentDeck,
+
+    // Acciones de cartas
     addCard,
     updateCard,
     deleteCard,
     updateProgress,
     markCardReviewed,
-    syncWithFirebase,
-    
+    moveCardToDeck,
+    deleteCardsFromDeck,
+
+    // Acciones de mazos
+    addDeck,
+    updateDeck,
+    deleteDeck,
+    switchDeck,
+
     // Utilidades
     getCardsByCategory,
+    getCurrentDeckCards,
     getCardsForReview,
-    getStats
+    getStats,
+    getGlobalStats,
+    getDeckById,
+    getDecksWithStats,
+    
+    // Sincronización
+    syncWithFirebase
   };
 };
-
-export default useFlashcards;

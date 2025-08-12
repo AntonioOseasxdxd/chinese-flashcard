@@ -1,8 +1,21 @@
-// src/pages/Practice.js
+// src/pages/Practice.jsx - Versión con selección de mazos
 import { useState, useEffect } from 'react';
 import { SpacedRepetition } from '../services/spacedRepetition';
 
-const Practice = ({ cards = [], userProgress = {}, updateProgress = () => {}, settings = {} }) => {
+const Practice = ({ 
+  cards = [], 
+  userProgress = {}, 
+  updateProgress = () => {}, 
+  settings = {},
+  // Nuevas props para mazos
+  decks = [],
+  currentDeck = null
+}) => {
+  // Estados para selección de mazo
+  const [selectedDeck, setSelectedDeck] = useState(null);
+  const [showDeckSelection, setShowDeckSelection] = useState(true);
+  
+  // Estados originales de práctica
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [studyQueue, setStudyQueue] = useState([]);
@@ -16,30 +29,56 @@ const Practice = ({ cards = [], userProgress = {}, updateProgress = () => {}, se
     totalCards: 0
   });
 
-  // Inicializar cola de estudio cuando cambian las cartas
+  // Reiniciar selección de mazo al cambiar las cartas
   useEffect(() => {
-    initializeStudySession();
-  }, [cards]);
+    setShowDeckSelection(true);
+    setSelectedDeck(null);
+    setStudyQueue([]);
+  }, [cards, decks]);
 
-  const initializeStudySession = () => {
-    if (!cards || cards.length === 0) return;
+  // Función para seleccionar un mazo y comenzar el estudio
+  const handleDeckSelection = (deck) => {
+    setSelectedDeck(deck);
+    setShowDeckSelection(false);
+    
+    // Filtrar cartas del mazo seleccionado
+    const deckCards = cards.filter(card => card.deckId === deck.id);
+    initializeStudySession(deckCards);
+  };
 
-    console.log('Inicializando sesión con cartas:', cards);
+  // Función para volver a la selección de mazos
+  const backToDeckSelection = () => {
+    setShowDeckSelection(true);
+    setSelectedDeck(null);
+    setStudyQueue([]);
+    setCurrentCardIndex(0);
+    resetCardState();
+    setSessionStats({
+      cardsStudied: 0,
+      correctAnswers: 0,
+      totalCards: 0
+    });
+  };
 
-    // Obtener cartas que necesitan revisión de TODOS los tipos
-    const cardsToStudy = SpacedRepetition.getCardsForReview(cards, userProgress);
+  const initializeStudySession = (deckCards) => {
+    if (!deckCards || deckCards.length === 0) return;
+
+    console.log('Inicializando sesión con cartas del mazo:', selectedDeck?.name, deckCards);
+
+    // Obtener cartas que necesitan revisión del mazo seleccionado
+    const cardsToStudy = SpacedRepetition.getCardsForReview(deckCards, userProgress);
     
     let finalQueue = [];
     
-    // Si no hay cartas para revisar, agregar cartas nuevas de TODOS los tipos
+    // Si no hay cartas para revisar, agregar cartas nuevas del mazo
     if (cardsToStudy.length === 0) {
-      const newCards = cards.filter(card => !userProgress[card.id]).slice(0, 10);
+      const newCards = deckCards.filter(card => !userProgress[card.id]).slice(0, 10);
       finalQueue = newCards;
     } else {
       finalQueue = cardsToStudy;
     }
 
-    console.log('Cola de estudio final:', finalQueue);
+    console.log('Cola de estudio final para el mazo:', finalQueue);
     
     setStudyQueue(finalQueue);
     setSessionStats(prev => ({ 
@@ -167,8 +206,8 @@ const Practice = ({ cards = [], userProgress = {}, updateProgress = () => {}, se
     
     alert(`¡Sesión completada!\n\nCartas estudiadas: ${sessionStats.cardsStudied}\nPrecisión: ${accuracy}%`);
     
-    // Reinicializar para una nueva sesión
-    initializeStudySession();
+    // Volver a la selección de mazos
+    backToDeckSelection();
   };
 
   const playAudio = (audioUrl) => {
@@ -200,6 +239,266 @@ const Practice = ({ cards = [], userProgress = {}, updateProgress = () => {}, se
         return null;
     }
   };
+
+  // Calcular estadísticas de mazos
+  const getDecksWithStats = () => {
+    return decks.map(deck => {
+      const deckCards = cards.filter(card => card.deckId === deck.id);
+      const cardsForReview = SpacedRepetition.getCardsForReview(deckCards, userProgress);
+      const newCards = deckCards.filter(card => !userProgress[card.id]);
+      
+      return {
+        ...deck,
+        cardCount: deckCards.length,
+        cardsForReview: cardsForReview.length,
+        newCards: newCards.length
+      };
+    });
+  };
+
+  // RENDERIZAR SELECCIÓN DE MAZOS
+  if (showDeckSelection) {
+    const decksWithStats = getDecksWithStats();
+    
+    return (
+      <div className="practice-container">
+        <div style={{
+          maxWidth: '800px',
+          margin: '0 auto',
+          padding: '20px'
+        }}>
+          <div style={{
+            textAlign: 'center',
+            marginBottom: '30px'
+          }}>
+            <h1 style={{
+              fontSize: '2.5em',
+              marginBottom: '10px',
+              color: '#2c3e50'
+            }}>
+              🧠 Práctica
+            </h1>
+            <p style={{
+              fontSize: '1.1em',
+              color: '#7f8c8d',
+              marginBottom: '0'
+            }}>
+              Selecciona el mazo que quieres estudiar
+            </p>
+          </div>
+
+          {decksWithStats.length === 0 ? (
+            <div style={{
+              textAlign: 'center',
+              padding: '40px 20px',
+              backgroundColor: '#f8f9fa',
+              borderRadius: '8px',
+              border: '2px dashed #dee2e6'
+            }}>
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>📚</div>
+              <h3 style={{ color: '#6c757d', marginBottom: '8px' }}>No hay mazos disponibles</h3>
+              <p style={{ color: '#6c757d', margin: '0' }}>
+                Crea algunos mazos y añade cartas para comenzar a estudiar.
+              </p>
+            </div>
+          ) : (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+              gap: '20px'
+            }}>
+              {decksWithStats.map(deck => (
+                <div
+                  key={deck.id}
+                  onClick={() => {
+                    if (deck.cardCount > 0) {
+                      handleDeckSelection(deck);
+                    }
+                  }}
+                  style={{
+                    padding: '20px',
+                    backgroundColor: 'white',
+                    borderRadius: '12px',
+                    border: `2px solid ${deck.color}20`,
+                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                    cursor: deck.cardCount > 0 ? 'pointer' : 'not-allowed',
+                    opacity: deck.cardCount > 0 ? 1 : 0.6,
+                    transition: 'all 0.3s ease',
+                    position: 'relative',
+                    overflow: 'hidden'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (deck.cardCount > 0) {
+                      e.target.style.transform = 'translateY(-2px)';
+                      e.target.style.boxShadow = '0 6px 12px rgba(0,0,0,0.15)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.transform = 'translateY(0)';
+                    e.target.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
+                  }}
+                >
+                  {/* Barra de color superior */}
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: '4px',
+                    backgroundColor: deck.color
+                  }} />
+                  
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '16px',
+                    marginBottom: '16px'
+                  }}>
+                    <div style={{
+                      fontSize: '2em',
+                      lineHeight: 1
+                    }}>
+                      {deck.icon}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{
+                        margin: '0 0 4px 0',
+                        fontSize: '1.3em',
+                        color: '#2c3e50'
+                      }}>
+                        {deck.name}
+                      </h3>
+                      {deck.description && (
+                        <p style={{
+                          margin: '0',
+                          fontSize: '0.9em',
+                          color: '#7f8c8d',
+                          lineHeight: '1.4'
+                        }}>
+                          {deck.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Estadísticas */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, 1fr)',
+                    gap: '12px',
+                    marginBottom: '16px'
+                  }}>
+                    <div style={{
+                      textAlign: 'center',
+                      padding: '8px',
+                      backgroundColor: '#f8f9fa',
+                      borderRadius: '6px'
+                    }}>
+                      <div style={{
+                        fontSize: '1.2em',
+                        fontWeight: 'bold',
+                        color: '#2c3e50'
+                      }}>
+                        {deck.cardCount}
+                      </div>
+                      <div style={{
+                        fontSize: '0.8em',
+                        color: '#7f8c8d'
+                      }}>
+                        Total
+                      </div>
+                    </div>
+                    
+                    <div style={{
+                      textAlign: 'center',
+                      padding: '8px',
+                      backgroundColor: deck.cardsForReview > 0 ? '#fff3cd' : '#f8f9fa',
+                      borderRadius: '6px'
+                    }}>
+                      <div style={{
+                        fontSize: '1.2em',
+                        fontWeight: 'bold',
+                        color: deck.cardsForReview > 0 ? '#856404' : '#2c3e50'
+                      }}>
+                        {deck.cardsForReview}
+                      </div>
+                      <div style={{
+                        fontSize: '0.8em',
+                        color: deck.cardsForReview > 0 ? '#856404' : '#7f8c8d'
+                      }}>
+                        Revisar
+                      </div>
+                    </div>
+                    
+                    <div style={{
+                      textAlign: 'center',
+                      padding: '8px',
+                      backgroundColor: deck.newCards > 0 ? '#d1ecf1' : '#f8f9fa',
+                      borderRadius: '6px'
+                    }}>
+                      <div style={{
+                        fontSize: '1.2em',
+                        fontWeight: 'bold',
+                        color: deck.newCards > 0 ? '#0c5460' : '#2c3e50'
+                      }}>
+                        {deck.newCards}
+                      </div>
+                      <div style={{
+                        fontSize: '0.8em',
+                        color: deck.newCards > 0 ? '#0c5460' : '#7f8c8d'
+                      }}>
+                        Nuevas
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Estado del mazo */}
+                  {deck.cardCount === 0 ? (
+                    <div style={{
+                      textAlign: 'center',
+                      padding: '8px',
+                      backgroundColor: '#f8d7da',
+                      color: '#721c24',
+                      borderRadius: '6px',
+                      fontSize: '0.9em'
+                    }}>
+                      Sin cartas disponibles
+                    </div>
+                  ) : deck.cardsForReview === 0 && deck.newCards === 0 ? (
+                    <div style={{
+                      textAlign: 'center',
+                      padding: '8px',
+                      backgroundColor: '#d4edda',
+                      color: '#155724',
+                      borderRadius: '6px',
+                      fontSize: '0.9em'
+                    }}>
+                      ✅ Todas las cartas al día
+                    </div>
+                  ) : (
+                    <div style={{
+                      textAlign: 'center',
+                      padding: '8px',
+                      backgroundColor: deck.color + '20',
+                      color: deck.color,
+                      borderRadius: '6px',
+                      fontSize: '0.9em',
+                      fontWeight: '500'
+                    }}>
+                      🎯 ¡Listo para estudiar!
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // RESTO DEL CÓDIGO ORIGINAL PARA LA PRÁCTICA
+  // [Todo el código de renderizado de tarjetas permanece igual...]
 
   // Renderizar el contenido de la tarjeta según su tipo
   const renderCardContent = (currentCard) => {
@@ -466,25 +765,61 @@ const Practice = ({ cards = [], userProgress = {}, updateProgress = () => {}, se
     }
   };
 
-  // Debug: Agregar logs para verificar el estado
-  console.log('Estado actual:', {
-    currentCardIndex,
-    studyQueueLength: studyQueue.length,
-    currentCard: getCurrentCard(),
-    showAnswer
-  });
-
   // Si no hay cartas en la cola de estudio
   if (!studyQueue || studyQueue.length === 0) {
     return (
       <div className="practice-container">
-        <div className="no-cards-message">
-          <h2>¡Bien hecho! 🎉</h2>
-          <p>No hay cartas para revisar en este momento.</p>
-          <p>Vuelve más tarde para continuar tu aprendizaje.</p>
-          <button className="btn-primary" onClick={initializeStudySession}>
-            Buscar más cartas
-          </button>
+        <div style={{
+          textAlign: 'center',
+          padding: '40px 20px',
+          maxWidth: '400px',
+          margin: '0 auto'
+        }}>
+          <div style={{ fontSize: '72px', marginBottom: '20px' }}>🎉</div>
+          <h2 style={{ marginBottom: '16px', color: '#2c3e50' }}>
+            ¡Bien hecho!
+          </h2>
+          <p style={{ color: '#7f8c8d', marginBottom: '20px' }}>
+            No hay cartas para revisar en <strong>{selectedDeck?.name}</strong> en este momento.
+          </p>
+          <p style={{ color: '#7f8c8d', marginBottom: '30px', fontSize: '0.9em' }}>
+            Vuelve más tarde para continuar tu aprendizaje.
+          </p>
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+            <button 
+              className="btn-primary" 
+              onClick={backToDeckSelection}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: '#007bff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '1em'
+              }}
+            >
+              ← Elegir otro mazo
+            </button>
+            <button 
+              className="btn-secondary" 
+              onClick={() => {
+                const deckCards = cards.filter(card => card.deckId === selectedDeck?.id);
+                initializeStudySession(deckCards);
+              }}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: 'white',
+                color: '#007bff',
+                border: '2px solid #007bff',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '1em'
+              }}
+            >
+              🔄 Buscar más cartas
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -496,10 +831,18 @@ const Practice = ({ cards = [], userProgress = {}, updateProgress = () => {}, se
       <div className="practice-container">
         <div className="no-cards-message">
           <h2>Error al cargar la tarjeta</h2>
-          <p>No se pudo cargar la tarjeta actual.</p>
-          <button className="btn-primary" onClick={initializeStudySession}>
-            Reiniciar sesión
-          </button>
+          <p>No se pudo cargar la tarjeta actual del mazo <strong>{selectedDeck?.name}</strong>.</p>
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+            <button className="btn-primary" onClick={backToDeckSelection}>
+              ← Elegir otro mazo
+            </button>
+            <button className="btn-secondary" onClick={() => {
+              const deckCards = cards.filter(card => card.deckId === selectedDeck?.id);
+              initializeStudySession(deckCards);
+            }}>
+              Reiniciar sesión
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -509,14 +852,77 @@ const Practice = ({ cards = [], userProgress = {}, updateProgress = () => {}, se
 
   return (
     <div className="practice-container">
+      {/* Header con información del mazo seleccionado */}
       <div className="practice-header">
-        <div className="progress-bar">
-          <div className="progress-fill" style={{width: `${progress}%`}}></div>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '16px'
+        }}>
+          <button 
+            onClick={backToDeckSelection}
+            style={{
+              padding: '8px 12px',
+              backgroundColor: 'white',
+              color: '#007bff',
+              border: '1px solid #007bff',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.9em',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            ← Cambiar mazo
+          </button>
+          
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontSize: '1.1em',
+            fontWeight: '500'
+          }}>
+            <span style={{ fontSize: '1.2em' }}>{selectedDeck?.icon}</span>
+            <span>{selectedDeck?.name}</span>
+          </div>
         </div>
-        <p>Carta {currentCardIndex + 1} de {studyQueue.length}</p>
-        <div className="session-stats">
-          <span>Estudiadas: {sessionStats.cardsStudied}</span>
-          <span>Precisión: {sessionStats.cardsStudied > 0 ? Math.round((sessionStats.correctAnswers / sessionStats.cardsStudied) * 100) : 0}%</span>
+
+        <div className="progress-bar" style={{
+          width: '100%',
+          height: '8px',
+          backgroundColor: '#e9ecef',
+          borderRadius: '4px',
+          overflow: 'hidden',
+          marginBottom: '12px'
+        }}>
+          <div 
+            className="progress-fill" 
+            style={{
+              width: `${progress}%`,
+              height: '100%',
+              backgroundColor: selectedDeck?.color || '#007bff',
+              transition: 'width 0.3s ease'
+            }}
+          ></div>
+        </div>
+        
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          fontSize: '0.9em',
+          color: '#6c757d'
+        }}>
+          <span>Carta {currentCardIndex + 1} de {studyQueue.length}</span>
+          <div className="session-stats" style={{ display: 'flex', gap: '16px' }}>
+            <span>Estudiadas: <strong>{sessionStats.cardsStudied}</strong></span>
+            <span>
+              Precisión: <strong>{sessionStats.cardsStudied > 0 ? Math.round((sessionStats.correctAnswers / sessionStats.cardsStudied) * 100) : 0}%</strong>
+            </span>
+          </div>
         </div>
       </div>
 
@@ -606,14 +1012,20 @@ const Practice = ({ cards = [], userProgress = {}, updateProgress = () => {}, se
 
         {/* Información de repetición espaciada */}
         {showAnswer && userProgress[currentCard.id] && (
-          <div className="spaced-repetition-info">
-            <small>
-              Nivel: {userProgress[currentCard.id].level} | 
-              Revisiones: {userProgress[currentCard.id].totalReviews || 0} |
-              Última vez: {userProgress[currentCard.id].lastReviewed ? 
+          <div className="spaced-repetition-info" style={{
+            marginTop: '16px',
+            padding: '12px',
+            backgroundColor: '#f8f9fa',
+            borderRadius: '6px',
+            textAlign: 'center'
+          }}>
+            <small style={{ color: '#6c757d' }}>
+              Nivel: <strong>{userProgress[currentCard.id].level || 0}</strong> | 
+              Revisiones: <strong>{userProgress[currentCard.id].totalReviews || 0}</strong> |
+              Última vez: <strong>{userProgress[currentCard.id].lastReviewed ? 
                 new Date(userProgress[currentCard.id].lastReviewed).toLocaleDateString() : 
                 'Primera vez'
-              }
+              }</strong>
             </small>
           </div>
         )}

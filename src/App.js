@@ -1,4 +1,4 @@
-// src/App.js
+// src/App.js - Actualizado para incluir editar y eliminar mazos
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import './App.css';
@@ -8,7 +8,7 @@ import Header from './components/Header';
 import Navigation from './components/Navigation';
 import CardManager from './components/CardManager';
 import DataInitializer from './components/DataInitializer';
-import ClearDataButton from './components/ClearDataButton'; // NUEVO
+import ClearDataButton from './components/ClearDataButton';
 
 // Pages
 import Home from './pages/Home';
@@ -31,25 +31,81 @@ function App() {
     difficulty: 'medium'
   });
   const [showDataInitializer, setShowDataInitializer] = useState(false);
-  const [showClearData, setShowClearData] = useState(false); // NUEVO
+  const [showClearData, setShowClearData] = useState(false);
+  const [showDeckManager, setShowDeckManager] = useState(false);
 
-  // Usar el hook de Firebase para manejar tarjetas
+  // Usar el hook de Firebase con manejo defensivo
+  const hookData = useFlashcards();
+
+  // Extraer datos con valores por defecto seguros
   const {
-    cards,
-    progress: userProgress,
-    loading,
-    syncing,
-    isOnline,
-    addCard,
-    updateCard,
-    deleteCard,
-    updateProgress: updateUserProgress,
-    markCardReviewed,
-    syncWithFirebase,
-    getCardsByCategory,
-    getCardsForReview,
-    getStats
-  } = useFlashcards();
+    cards = [],
+    progress: userProgress = {},
+    loading = false,
+    syncing = false,
+    isOnline = false,
+    
+    // Estados de mazos con valores por defecto
+    decks = [],
+    currentDeck = null,
+    
+    // Acciones de cartas con funciones por defecto
+    addCard = async () => {
+      console.warn('addCard function not available');
+      return null;
+    },
+    updateCard = async () => {
+      console.warn('updateCard function not available');
+    },
+    deleteCard = async () => {
+      console.warn('deleteCard function not available');
+    },
+    updateProgress: updateUserProgress = async () => {},
+    markCardReviewed = async () => {},
+    moveCardToDeck = async () => {},
+    deleteCardsFromDeck = async () => {},
+    syncWithFirebase = async () => {},
+    
+    // Acciones de mazos con funciones por defecto
+    addDeck = async () => {
+      console.warn('addDeck function not available');
+      return null;
+    },
+    updateDeck = async () => {
+      console.warn('updateDeck function not available');
+    },
+    deleteDeck = async () => {
+      console.warn('deleteDeck function not available');
+    },
+    switchDeck = async () => {
+      console.warn('switchDeck function not available');
+    },
+    
+    // Utilidades con funciones por defecto
+    getCardsByCategory = () => [],
+    getCurrentDeckCards = () => [],
+    getCardsForReview = () => [],
+    getStats = () => ({
+      totalCards: 0,
+      reviewedCards: 0,
+      correctAnswers: 0,
+      totalAnswers: 0,
+      accuracy: 0,
+      cardsForReview: 0,
+      currentDeck: 'Todos los mazos'
+    }),
+    getGlobalStats = () => ({
+      totalCards: 0,
+      reviewedCards: 0,
+      correctAnswers: 0,
+      totalAnswers: 0,
+      accuracy: 0,
+      totalDecks: 0,
+      cardsForReview: 0
+    }),
+    getDeckById = () => null,
+    getDecksWithStats = () => []
+  } = hookData || {};
 
   // Cargar configuraciones al iniciar
   useEffect(() => {
@@ -111,12 +167,132 @@ function App() {
     }
   };
 
-  // NUEVO: Manejar limpieza de datos
+  // Manejar cambio de mazo
+  const handleDeckChange = async (deck) => {
+    try {
+      await switchDeck(deck);
+      console.log('Switched to deck:', deck?.name || 'Unknown');
+    } catch (error) {
+      console.error('Error switching deck:', error);
+    }
+  };
+
+  // Manejar creación de mazo - FUNCIÓN CORREGIDA
+  const handleCreateDeck = async (deckData) => {
+    try {
+      const createdDeck = await addDeck(deckData);
+      console.log('Deck created:', deckData?.name || 'Unknown');
+      setShowDeckManager(false);
+      return createdDeck; // Importante: devolver el mazo creado
+    } catch (error) {
+      console.error('Error creating deck:', error);
+      throw error; // Re-lanzar el error para que CardManager lo maneje
+    }
+  };
+
+  // NUEVA FUNCIÓN: Manejar edición de mazo
+  const handleEditDeck = async (deckId, deckData) => {
+    try {
+      const updatedDeck = await updateDeck(deckId, deckData);
+      console.log('Deck updated:', deckData?.name || 'Unknown');
+      return updatedDeck;
+    } catch (error) {
+      console.error('Error updating deck:', error);
+      throw error; // Re-lanzar el error para que CardManager lo maneje
+    }
+  };
+
+  // NUEVA FUNCIÓN: Manejar eliminación de mazo
+  const handleDeleteDeck = async (deckId) => {
+    try {
+      // Obtener información del mazo antes de eliminarlo
+      const deckToDelete = decks.find(deck => deck.id === deckId);
+      const deckCards = cards.filter(card => card.deckId === deckId);
+      
+      // Eliminar todas las tarjetas del mazo primero si las hay
+      if (deckCards.length > 0) {
+        for (const card of deckCards) {
+          await deleteCard(card.id);
+        }
+      }
+      
+      // Eliminar el mazo
+      await deleteDeck(deckId);
+      console.log('Deck and its cards deleted:', deckToDelete?.name || 'Unknown');
+      
+      return true;
+    } catch (error) {
+      console.error('Error deleting deck:', error);
+      throw error; // Re-lanzar el error para que CardManager lo maneje
+    }
+  };
+
+  // Manejar mover carta a mazo
+  const handleMoveCardToDeck = async (cardId, deckId) => {
+    try {
+      await moveCardToDeck(cardId, deckId);
+      console.log(`Card ${cardId} moved to deck ${deckId}`);
+    } catch (error) {
+      console.error('Error moving card to deck:', error);
+    }
+  };
+
+  // Manejar limpieza de datos
   const handleDataCleared = () => {
     console.log('All data cleared!');
     setShowClearData(false);
     // La página se recargará automáticamente
   };
+
+  // Obtener estadísticas y datos actuales de forma segura
+  const getSafeStats = () => {
+    try {
+      return currentDeck ? getStats() : getGlobalStats();
+    } catch (error) {
+      console.error('Error getting stats:', error);
+      return {
+        totalCards: 0,
+        reviewedCards: 0,
+        correctAnswers: 0,
+        totalAnswers: 0,
+        accuracy: 0,
+        cardsForReview: 0,
+        currentDeck: 'Error'
+      };
+    }
+  };
+
+  const getSafeCurrentCards = () => {
+    try {
+      if (currentDeck) {
+        const deckCards = getCurrentDeckCards();
+        return Array.isArray(deckCards) ? deckCards : [];
+      }
+      return Array.isArray(cards) ? cards : [];
+    } catch (error) {
+      console.error('Error getting current cards:', error);
+      return [];
+    }
+  };
+
+  const getSafeReviewCards = () => {
+    try {
+      if (currentDeck) {
+        const reviewCards = getCardsForReview(currentDeck.id);
+        return Array.isArray(reviewCards) ? reviewCards : [];
+      }
+      const reviewCards = getCardsForReview();
+      return Array.isArray(reviewCards) ? reviewCards : [];
+    } catch (error) {
+      console.error('Error getting review cards:', error);
+      return [];
+    }
+  };
+
+  // Calcular datos actuales de forma segura
+  const currentStats = getSafeStats();
+  const currentCards = getSafeCurrentCards();
+  const reviewCards = getSafeReviewCards();
 
   // Mostrar loading inicial
   if (loading) {
@@ -183,7 +359,11 @@ function App() {
           
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             <span style={{ fontSize: '11px' }}>
-              📚 {cards.length} cartas • 🎯 {getStats().cardsForReview} pendientes
+              {currentDeck ? (
+                <>📂 {currentDeck.name} • 📚 {currentCards.length} cartas • 🎯 {reviewCards.length} pendientes</>
+              ) : (
+                <>📚 {cards.length} cartas • 🎯 {reviewCards.length} pendientes</>
+              )}
             </span>
             
             {isOnline && (
@@ -218,7 +398,6 @@ function App() {
               ⚙️ Config
             </button>
 
-            {/* NUEVO: Botón para mostrar limpiador de datos */}
             <button
               onClick={() => setShowClearData(!showClearData)}
               style={{
@@ -241,7 +420,7 @@ function App() {
           <DataInitializer onInitComplete={() => setShowDataInitializer(false)} />
         )}
 
-        {/* NUEVO: Mostrar limpiador de datos si está activado */}
+        {/* Mostrar limpiador de datos si está activado */}
         {showClearData && (
           <ClearDataButton onDataCleared={handleDataCleared} />
         )}
@@ -252,11 +431,13 @@ function App() {
               path="/"
               element={
                 <Home
-                  cards={cards}
+                  cards={currentCards}
                   userProgress={userProgress}
                   settings={settings}
-                  stats={getStats()}
-                  cardsForReview={getCardsForReview()}
+                  stats={currentStats}
+                  cardsForReview={reviewCards}
+                  currentDeck={currentDeck}
+                  decks={decks}
                 />
               }
             />
@@ -264,12 +445,16 @@ function App() {
               path="/practice"
               element={
                 <Practice
-                  cards={cards}
+                  // Props originales
+                  cards={cards} // Pasar TODAS las cartas para que Practice pueda filtrar por mazo
                   userProgress={userProgress}
                   updateProgress={handleUpdateProgress}
                   markCardReviewed={handleMarkCardReviewed}
                   settings={settings}
-                  cardsForReview={getCardsForReview()}
+                  cardsForReview={reviewCards}
+                  currentDeck={currentDeck}
+                  // Nuevas props para mazos
+                  decks={decks}
                 />
               }
             />
@@ -277,10 +462,13 @@ function App() {
               path="/progress"
               element={
                 <Progress
-                  cards={cards}
+                  cards={currentCards}
                   userProgress={userProgress}
-                  stats={getStats()}
+                  stats={currentStats}
                   getCardsByCategory={getCardsByCategory}
+                  currentDeck={currentDeck}
+                  decks={decks}
+                  globalStats={getGlobalStats()}
                 />
               }
             />
@@ -293,23 +481,57 @@ function App() {
                   isOnline={isOnline}
                   syncing={syncing}
                   onManualSync={handleManualSync}
-                  stats={getStats()}
+                  stats={currentStats}
+                  globalStats={getGlobalStats()}
+                  currentDeck={currentDeck}
                 />
               } 
             />
             <Route
-  path="/cards"
-  element={
-    <CardManager
-      cards={cards}
-      onAddCard={(newCard) => addCard(newCard)}
-      onDeleteCard={(cardId) => deleteCard(cardId)}
-      onEditCard={(updatedCard) => updateCard(updatedCard.id, updatedCard)} // ✅ CORRECTO
-      isOnline={isOnline}
-      syncing={syncing}
-    />
-  }
-/>
+              path="/cards"
+              element={
+                <CardManager
+                  cards={Array.isArray(cards) ? cards : []}
+                  onAddCard={async (newCard) => {
+                    try {
+                      return await addCard(newCard);
+                    } catch (error) {
+                      console.error('Error adding card:', error);
+                      throw error;
+                    }
+                  }}
+                  onDeleteCard={async (cardId) => {
+                    try {
+                      return await deleteCard(cardId);
+                    } catch (error) {
+                      console.error('Error deleting card:', error);
+                      throw error;
+                    }
+                  }}
+                  onEditCard={async (updatedCard) => {
+                    try {
+                      return await updateCard(updatedCard.id, updatedCard);
+                    } catch (error) {
+                      console.error('Error updating card:', error);
+                      throw error;
+                    }
+                  }}
+                  // PROPS PARA SISTEMA DE MAZOS
+                  decks={Array.isArray(decks) ? decks : []}
+                  currentDeck={currentDeck}
+                  onAddDeck={handleCreateDeck}
+                  onSwitchDeck={handleDeckChange}
+                  onEditDeck={handleEditDeck}    // ✅ NUEVA PROP AGREGADA
+                  onDeleteDeck={handleDeleteDeck} // ✅ NUEVA PROP AGREGADA
+                  loading={loading}
+                  // Props adicionales
+                  onMoveCardToDeck={handleMoveCardToDeck}
+                  isOnline={isOnline}
+                  syncing={syncing}
+                  userProgress={userProgress}
+                />
+              }
+            />
           </Routes>
         </main>
 

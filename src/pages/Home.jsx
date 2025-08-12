@@ -1,34 +1,139 @@
-// src/pages/Home.jsx
+// src/pages/Home.jsx - VERSIÓN CORREGIDA
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { SpacedRepetition } from '../services/spacedRepetition';
 
-const Home = ({ cards = [], userProgress = {}, settings = {} }) => {
-  // Calcular estadísticas usando la función correcta
+const Home = ({ 
+  cards = [], 
+  userProgress = {}, 
+  settings = {},
+  stats: providedStats = null,
+  cardsForReview: providedCardsForReview = null,
+  currentDeck = null,
+  decks = []
+}) => {
+  // Calcular estadísticas usando la función correcta (con validación defensiva)
   const stats = useMemo(() => {
-    // Usar getLearningStats en lugar de getStudyStats
-    return SpacedRepetition.getLearningStats(cards, userProgress);
-  }, [cards, userProgress]);
+    try {
+      // Si se proporcionan stats desde props, usarlas
+      if (providedStats) {
+        return providedStats;
+      }
+      
+      // Asegurarse de que cards es un array
+      const safeCards = Array.isArray(cards) ? cards : [];
+      const safeProgress = userProgress || {};
+      
+      // Usar getLearningStats si está disponible
+      if (SpacedRepetition?.getLearningStats) {
+        return SpacedRepetition.getLearningStats(safeCards, safeProgress);
+      }
+      
+      // Fallback: calcular estadísticas básicas manualmente
+      return {
+        new: safeCards.filter(card => !safeProgress[card.id]).length,
+        learning: 0,
+        review: safeCards.filter(card => safeProgress[card.id]?.reviewCount >= 1).length,
+        mastered: safeCards.filter(card => safeProgress[card.id]?.reviewCount >= 3).length,
+        total: safeCards.length
+      };
+    } catch (error) {
+      console.error('Error calculating stats:', error);
+      return {
+        new: 0,
+        learning: 0,
+        review: 0,
+        mastered: 0,
+        total: 0
+      };
+    }
+  }, [cards, userProgress, providedStats]);
 
-  // Obtener cartas que necesitan revisión
+  // Obtener cartas que necesitan revisión (con validación defensiva)
   const cardsForReview = useMemo(() => {
-    return SpacedRepetition.getCardsForReview(cards, userProgress);
-  }, [cards, userProgress]);
+    try {
+      // Si se proporcionan desde props, usarlas
+      if (providedCardsForReview) {
+        return Array.isArray(providedCardsForReview) ? providedCardsForReview : [];
+      }
+      
+      // Asegurarse de que cards es un array
+      const safeCards = Array.isArray(cards) ? cards : [];
+      const safeProgress = userProgress || {};
+      
+      // Usar getCardsForReview si está disponible
+      if (SpacedRepetition?.getCardsForReview) {
+        const reviewCards = SpacedRepetition.getCardsForReview(safeCards, safeProgress);
+        return Array.isArray(reviewCards) ? reviewCards : [];
+      }
+      
+      // Fallback: calcular cartas para revisión manualmente
+      return safeCards.filter(card => {
+        const cardProgress = safeProgress[card.id];
+        if (!cardProgress) return true; // Cartas nuevas necesitan revisión
+        
+        // Si no hay fecha de última revisión, necesita revisión
+        if (!cardProgress.lastReviewed) return true;
+        
+        // Calcular si necesita revisión basado en intervalo
+        const lastReview = new Date(cardProgress.lastReviewed);
+        const daysSinceReview = (new Date() - lastReview) / (1000 * 60 * 60 * 24);
+        const reviewInterval = Math.min(30, Math.pow(2, cardProgress.reviewCount || 0));
+        
+        return daysSinceReview >= reviewInterval;
+      });
+    } catch (error) {
+      console.error('Error calculating cards for review:', error);
+      return [];
+    }
+  }, [cards, userProgress, providedCardsForReview]);
 
-  // Calcular racha y progreso diario
+  // Calcular racha y progreso diario (con validación defensiva)
   const dailyProgress = useMemo(() => {
-    const today = new Date().toDateString();
-    const reviewedToday = Object.values(userProgress).filter(progress => {
-      if (!progress.lastReviewed) return false;
-      return new Date(progress.lastReviewed).toDateString() === today;
-    }).length;
+    try {
+      const today = new Date().toDateString();
+      const safeProgress = userProgress || {};
+      
+      const reviewedToday = Object.values(safeProgress).filter(progress => {
+        if (!progress?.lastReviewed) return false;
+        try {
+          return new Date(progress.lastReviewed).toDateString() === today;
+        } catch (error) {
+          return false;
+        }
+      }).length;
 
-    return {
-      reviewedToday,
-      dailyGoal: settings.dailyGoal || 20,
-      progressPercentage: Math.min((reviewedToday / (settings.dailyGoal || 20)) * 100, 100)
-    };
+      const dailyGoal = settings?.dailyGoal || 20;
+
+      return {
+        reviewedToday,
+        dailyGoal,
+        progressPercentage: Math.min((reviewedToday / dailyGoal) * 100, 100)
+      };
+    } catch (error) {
+      console.error('Error calculating daily progress:', error);
+      return {
+        reviewedToday: 0,
+        dailyGoal: 20,
+        progressPercentage: 0
+      };
+    }
   }, [userProgress, settings.dailyGoal]);
+
+  // Determinar el contexto actual (mazo específico o global)
+  const contextInfo = useMemo(() => {
+    if (currentDeck) {
+      return {
+        title: `${currentDeck.icon || '📂'} ${currentDeck.name}`,
+        description: currentDeck.description || 'Mazo seleccionado'
+      };
+    }
+    
+    return {
+      title: '📚 Todas las Tarjetas',
+      description: `${Array.isArray(decks) ? decks.length : 0} mazos disponibles`
+    };
+  }, [currentDeck, decks]);
 
   return (
     <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
@@ -41,13 +146,16 @@ const Home = ({ cards = [], userProgress = {}, settings = {} }) => {
         marginBottom: '20px',
         textAlign: 'center'
       }}>
-        <h1 style={{ margin: '0 0 10px 0', fontSize: '24px' }}>
-          ¡Bien hecho! 🎉
+        <h1 style={{ margin: '0 0 5px 0', fontSize: '24px' }}>
+          {contextInfo.title}
         </h1>
-        <p style={{ margin: 0, opacity: 0.9 }}>
+        <p style={{ margin: '0 0 10px 0', opacity: 0.9, fontSize: '14px' }}>
+          {contextInfo.description}
+        </p>
+        <p style={{ margin: 0, opacity: 0.9, fontWeight: 'bold' }}>
           {cardsForReview.length > 0 
-            ? `Tienes ${cardsForReview.length} tarjetas para revisar`
-            : 'No hay cartas para revisar en este momento'
+            ? `🎯 Tienes ${cardsForReview.length} tarjetas para revisar`
+            : '🎉 ¡Excelente! No hay cartas pendientes'
           }
         </p>
       </div>
@@ -130,7 +238,7 @@ const Home = ({ cards = [], userProgress = {}, settings = {} }) => {
               color: '#ff9800',
               marginBottom: '5px'
             }}>
-              {stats.new}
+              {stats.new || 0}
             </div>
             <div style={{ fontSize: '12px', color: '#666' }}>Nuevas</div>
           </div>
@@ -142,7 +250,7 @@ const Home = ({ cards = [], userProgress = {}, settings = {} }) => {
               color: '#2196f3',
               marginBottom: '5px'
             }}>
-              {stats.learning}
+              {stats.learning || 0}
             </div>
             <div style={{ fontSize: '12px', color: '#666' }}>Aprendiendo</div>
           </div>
@@ -154,7 +262,7 @@ const Home = ({ cards = [], userProgress = {}, settings = {} }) => {
               color: '#9c27b0',
               marginBottom: '5px'
             }}>
-              {stats.review}
+              {stats.review || 0}
             </div>
             <div style={{ fontSize: '12px', color: '#666' }}>En revisión</div>
           </div>
@@ -166,7 +274,7 @@ const Home = ({ cards = [], userProgress = {}, settings = {} }) => {
               color: '#4caf50',
               marginBottom: '5px'
             }}>
-              {stats.mastered}
+              {stats.mastered || 0}
             </div>
             <div style={{ fontSize: '12px', color: '#666' }}>Dominadas</div>
           </div>
@@ -178,7 +286,7 @@ const Home = ({ cards = [], userProgress = {}, settings = {} }) => {
         display: 'grid',
         gridTemplateColumns: cardsForReview.length > 0 ? '2fr 1fr' : '1fr',
         gap: '15px',
-        marginBottom: '80px' // Espacio para la navegación inferior
+        marginBottom: '20px'
       }}>
         {cardsForReview.length > 0 ? (
           <Link
@@ -192,10 +300,11 @@ const Home = ({ cards = [], userProgress = {}, settings = {} }) => {
               textAlign: 'center',
               fontSize: '16px',
               fontWeight: 'bold',
-              boxShadow: '0 4px 15px rgba(76, 175, 80, 0.3)'
+              boxShadow: '0 4px 15px rgba(76, 175, 80, 0.3)',
+              display: 'block'
             }}
           >
-            🚀 Comenzar Estudio
+            🚀 Comenzar Estudio ({cardsForReview.length})
           </Link>
         ) : (
           <div style={{
@@ -246,8 +355,88 @@ const Home = ({ cards = [], userProgress = {}, settings = {} }) => {
         }}>
           <div style={{ fontSize: '14px', color: '#666', textAlign: 'center' }}>
             Total de tarjetas: <strong>{stats.total}</strong>
+            {currentDeck && (
+              <span style={{ marginLeft: '10px', color: currentDeck.color || '#007bff' }}>
+                en {currentDeck.name}
+              </span>
+            )}
           </div>
         </div>
+      )}
+
+      {/* Resumen de mazos (solo si no hay mazo seleccionado) */}
+      {!currentDeck && Array.isArray(decks) && decks.length > 1 && (
+        <div style={{
+          backgroundColor: 'white',
+          borderRadius: '12px',
+          padding: '20px',
+          marginBottom: '80px', // Espacio para la navegación inferior
+          boxShadow: '0 2px 10px rgba(0,0,0,0.1)'
+        }}>
+          <h3 style={{ margin: '0 0 15px 0', color: '#333' }}>
+            📂 Tus Mazos
+          </h3>
+          
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+            gap: '12px'
+          }}>
+            {decks.map(deck => {
+              const deckCards = Array.isArray(cards) ? cards.filter(card => card.deckId === deck.id) : [];
+              const deckReviewCards = Array.isArray(cardsForReview) ? cardsForReview.filter(card => card.deckId === deck.id) : [];
+              
+              return (
+                <div
+                  key={deck.id}
+                  style={{
+                    backgroundColor: '#f8f9fa',
+                    border: `2px solid ${deck.color || '#007bff'}`,
+                    borderRadius: '8px',
+                    padding: '12px',
+                    textAlign: 'center'
+                  }}
+                >
+                  <div style={{
+                    fontSize: '24px',
+                    marginBottom: '8px'
+                  }}>
+                    {deck.icon || '📚'}
+                  </div>
+                  <div style={{
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    color: '#333',
+                    marginBottom: '4px'
+                  }}>
+                    {deck.name}
+                  </div>
+                  <div style={{
+                    fontSize: '12px',
+                    color: '#666',
+                    marginBottom: '8px'
+                  }}>
+                    {deckCards.length} tarjetas
+                  </div>
+                  {deckReviewCards.length > 0 && (
+                    <div style={{
+                      fontSize: '12px',
+                      color: '#ff5722',
+                      fontWeight: 'bold'
+                    }}>
+                      🎯 {deckReviewCards.length} pendientes
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Espacio adicional si hay mazo seleccionado */}
+      {currentDeck && (
+        <div style={{ marginBottom: '80px' }}></div>
       )}
     </div>
   );
