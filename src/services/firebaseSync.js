@@ -1,138 +1,341 @@
-// src/services/firebaseSync.js - SINCRONIZACIÓN PERSONAL SIMPLIFICADA CON ID FIJO
+// src/services/firebaseSync.js - SINCRONIZACIÓN BIDIRECCIONAL CORREGIDA
 import { db } from './firebase';
 import { 
   doc, 
   getDoc, 
-  setDoc, 
-  updateDoc, 
+  setDoc,
   serverTimestamp,
   collection,
   getDocs,
-  deleteDoc
+  deleteDoc,
+  onSnapshot,
+  writeBatch
 } from 'firebase/firestore';
 import { OfflineStorage } from './offlineStorage';
 
-// ID FIJO para tu uso personal - SIEMPRE EL MISMO EN TODOS LOS DISPOSITIVOS
-const PERSONAL_USER_ID = 'my  _chinese_flashcards_personal';
-
-// ⚠️ FUNCIÓN PARA MIGRAR DATOS EXISTENTES A ID FIJO
-const migrateExistingData = async () => {
-  try {
-    console.log('🔄 Verificando si hay datos para migrar...');
-    
-    // Obtener todos los documentos de la colección
-    const collectionRef = collection(db, 'chinese_flashcards');
-    const querySnapshot = await getDocs(collectionRef);
-    
-    let dataToMigrate = null;
-    let oldDocId = null;
-    
-    // Buscar documentos que NO sean el ID personal fijo
-    querySnapshot.forEach((docSnapshot) => {
-      if (docSnapshot.id !== PERSONAL_USER_ID) {
-        console.log('📦 Encontrado documento para migrar:', docSnapshot.id);
-        oldDocId = docSnapshot.id;
-        dataToMigrate = docSnapshot.data();
-      }
-    });
-    
-    if (dataToMigrate && oldDocId) {
-      console.log('🚚 Migrando datos de', oldDocId, 'a', PERSONAL_USER_ID);
-      
-      // Obtener datos existentes del ID fijo (si existen)
-      const fixedDoc = await getDoc(doc(db, 'chinese_flashcards', PERSONAL_USER_ID));
-      let existingData = { decks: [], cards: [], progress: {} };
-      
-      if (fixedDoc.exists()) {
-        existingData = fixedDoc.data();
-        console.log('📋 Datos existentes en ID fijo encontrados');
-      }
-      
-      // Mergear datos
-      const mergedData = {
-        decks: [...(existingData.decks || []), ...(dataToMigrate.decks || [])],
-        cards: [...(existingData.cards || []), ...(dataToMigrate.cards || [])],
-        progress: { ...(existingData.progress || {}), ...(dataToMigrate.progress || {}) },
-        lastUpdated: serverTimestamp(),
-        deviceInfo: {
-          migratedFrom: oldDocId,
-          migrationDate: new Date().toISOString(),
-          ...dataToMigrate.deviceInfo
-        }
-      };
-      
-      // Remover duplicados por ID
-      mergedData.decks = Array.from(
-        new Map(mergedData.decks.map(deck => [deck.id, deck])).values()
-      );
-      mergedData.cards = Array.from(
-        new Map(mergedData.cards.map(card => [card.id, card])).values()
-      );
-      
-      // Guardar datos mergeados en el ID fijo
-      await setDoc(doc(db, 'chinese_flashcards', PERSONAL_USER_ID), mergedData);
-      
-      // Eliminar el documento antiguo
-      await deleteDoc(doc(db, 'chinese_flashcards', oldDocId));
-      
-      console.log('✅ Migración completada exitosamente');
-      console.log('📊 Datos migrados:', {
-        decks: mergedData.decks.length,
-        cards: mergedData.cards.length,
-        progress: Object.keys(mergedData.progress).length
-      });
-      
-      return true;
-    } else {
-      console.log('✅ No hay datos para migrar');
-      return false;
-    }
-    
-  } catch (error) {
-    console.error('❌ Error durante la migración:', error);
-    return false;
-  }
-};
+// ID FIJO para tu uso personal
+const PERSONAL_USER_ID = 'my_chinese_flashcards_personal';
 
 export const FirebaseSync = {
-  currentUser: PERSONAL_USER_ID, // SIEMPRE EL MISMO ID
+  currentUser: PERSONAL_USER_ID,
   isInitialized: false,
+  isOnlineMode: true,
+  unsubscribeListener: null,
+  initPromise: null,
+  lastSyncTimestamp: 0,
+  syncInProgress: false,
+  
+  // ============================================
+  // DEBUGGING Y LOGGING MEJORADO
+  // ============================================
+  log(message, data = null) {
+    const timestamp = new Date().toISOString();
+    const deviceInfo = this.getDeviceInfo();
+    console.log(`[FirebaseSync][${deviceInfo}][${timestamp}] ${message}`, data || '');
+  },
 
-  // Inicialización con migración automática
-  async initializeUser() {
+  getDeviceInfo() {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const platform = navigator.platform || 'Unknown';
+    return `${isMobile ? 'Mobile' : 'Desktop'}-${platform}`;
+  },
+
+  // ============================================
+  // MIGRACIÓN MEJORADA
+  // ============================================
+  async migrateExistingData() {
     try {
-      console.log('🔥 Inicializando Firebase con ID fijo:', PERSONAL_USER_ID);
+      this.log('🔄 Verificando migración...');
       
-      // Migrar datos existentes si es necesario
-      await migrateExistingData();
+      const collectionRef = collection(db, 'chinese_flashcards');
+      const querySnapshot = await getDocs(collectionRef);
       
-      this.isInitialized = true;
-      console.log('✅ Firebase inicializado correctamente');
+      let dataToMigrate = null;
+      let oldDocId = null;
       
-      // Sincronizar automáticamente al inicializar
-      await this.smartSync();
-      return true;
+      querySnapshot.forEach((docSnapshot) => {
+        if (docSnapshot.id !== PERSONAL_USER_ID) {
+          this.log('📦 Documento para migrar encontrado:', docSnapshot.id);
+          oldDocId = docSnapshot.id;
+          dataToMigrate = docSnapshot.data();
+        }
+      });
+      
+      if (dataToMigrate && oldDocId) {
+        this.log('🚚 Iniciando migración de datos...');
+        
+        // Verificar si ya existe el documento fijo
+        const fixedDoc = await getDoc(doc(db, 'chinese_flashcards', PERSONAL_USER_ID));
+        let existingData = { decks: [], cards: [], progress: {} };
+        
+        if (fixedDoc.exists()) {
+          existingData = fixedDoc.data();
+        }
+        
+        // Mergear datos evitando duplicados
+        const mergedData = {
+          decks: this.mergeArraysById([...(existingData.decks || []), ...(dataToMigrate.decks || [])]),
+          cards: this.mergeArraysById([...(existingData.cards || []), ...(dataToMigrate.cards || [])]),
+          progress: { ...(existingData.progress || {}), ...(dataToMigrate.progress || {}) },
+          lastUpdated: serverTimestamp(),
+          syncVersion: Date.now(),
+          device: this.getDeviceInfo(),
+          migratedFrom: oldDocId,
+          migrationDate: new Date().toISOString()
+        };
+        
+        await setDoc(doc(db, 'chinese_flashcards', PERSONAL_USER_ID), mergedData);
+        await deleteDoc(doc(db, 'chinese_flashcards', oldDocId));
+        
+        this.log('✅ Migración completada exitosamente');
+        return true;
+      }
+      
+      this.log('ℹ️ No se encontraron datos para migrar');
+      return false;
     } catch (error) {
-      console.error('❌ Error inicializando Firebase:', error);
-      this.isInitialized = true; // Continuar aunque falle
+      this.log('❌ Error en migración:', error);
       return false;
     }
   },
 
-  // FORZAR USO DEL ID FIJO - Esta función garantiza que siempre usemos el ID correcto
-  getUserId() {
-    return PERSONAL_USER_ID; // SIEMPRE devuelve el ID fijo
+  // Mergear arrays evitando duplicados por ID
+  mergeArraysById(array) {
+    const map = new Map();
+    array.forEach(item => {
+      if (item && item.id) {
+        // Priorizar elementos con timestamp más reciente
+        const existing = map.get(item.id);
+        if (!existing || (item.updatedAt && (!existing.updatedAt || new Date(item.updatedAt) > new Date(existing.updatedAt)))) {
+          map.set(item.id, item);
+        }
+      }
+    });
+    return Array.from(map.values());
   },
 
-  // SINCRONIZACIÓN INTELIGENTE - Decide automáticamente qué hacer
-  async smartSync() {
+  // ============================================
+  // INICIALIZACIÓN MEJORADA
+  // ============================================
+  async initializeUser() {
+    // Evitar múltiples inicializaciones
+    if (this.initPromise) {
+      this.log('⏳ Inicialización ya en progreso, esperando...');
+      return this.initPromise;
+    }
+
+    this.initPromise = (async () => {
+      try {
+        this.log('🔥 Iniciando Firebase Sync...');
+        
+        // Verificar conectividad con timeout
+        this.isOnlineMode = await this.checkConnectionWithTimeout();
+        this.log(`🌐 Estado de conexión: ${this.isOnlineMode ? 'ONLINE' : 'OFFLINE'}`);
+        
+        if (this.isOnlineMode) {
+          // Migrar datos si es necesario
+          await this.migrateExistingData();
+          
+          // Configurar listener en tiempo real con reintentos
+          await this.setupRealtimeListener();
+        }
+        
+        this.isInitialized = true;
+        this.log('✅ Firebase Sync inicializado correctamente');
+        
+        return true;
+      } catch (error) {
+        this.log('❌ Error inicializando Firebase Sync:', error);
+        this.isInitialized = true; // Marcar como inicializado para evitar loops
+        return false;
+      }
+    })();
+
+    return this.initPromise;
+  },
+
+  // ============================================
+  // LISTENER EN TIEMPO REAL MEJORADO
+  // ============================================
+  async setupRealtimeListener() {
+    if (this.unsubscribeListener) {
+      this.log('🔌 Desconectando listener anterior...');
+      this.unsubscribeListener();
+    }
+
     try {
-      console.log('🧠 Iniciando sincronización inteligente con ID:', this.getUserId());
+      const userDoc = doc(db, 'chinese_flashcards', PERSONAL_USER_ID);
+      
+      this.log('👂 Configurando listener en tiempo real...');
+      
+      this.unsubscribeListener = onSnapshot(
+        userDoc, 
+        async (docSnapshot) => {
+          try {
+            this.log('🔔 Snapshot recibido', { exists: docSnapshot.exists() });
+            
+            if (docSnapshot.exists()) {
+              const firebaseData = docSnapshot.data();
+              this.log('📊 Datos de Firebase recibidos:', {
+                decks: firebaseData.decks?.length || 0,
+                cards: firebaseData.cards?.length || 0,
+                progress: Object.keys(firebaseData.progress || {}).length,
+                syncVersion: firebaseData.syncVersion,
+                device: firebaseData.device
+              });
+              
+              // CLAVE: Verificar si este cambio no proviene de este mismo dispositivo
+              if (firebaseData.device && firebaseData.device === this.getDeviceInfo()) {
+                this.log('⚠️ Cambio proviene de este mismo dispositivo, ignorando para evitar loop');
+                return;
+              }
+              
+              // Verificar si hay cambios reales
+              if (this.lastSyncTimestamp && firebaseData.syncVersion <= this.lastSyncTimestamp) {
+                this.log('⚠️ Datos no son más recientes, ignorando');
+                return;
+              }
+              
+              this.log('🔄 Cambios detectados desde otro dispositivo, aplicando...');
+              
+              // Obtener datos locales actuales
+              const localData = await this.getLocalData();
+              
+              // Aplicar merge inteligente
+              const mergedData = this.intelligentMerge(firebaseData, localData);
+              
+              // Guardar localmente SIN sincronizar de vuelta
+              await this.saveLocalDataOnly(mergedData);
+              
+              // Actualizar timestamp local
+              this.lastSyncTimestamp = firebaseData.syncVersion || Date.now();
+              
+              // Notificar a la UI
+              this.notifyUIUpdate(mergedData);
+              
+              this.log('✅ Cambios aplicados correctamente');
+            } else {
+              this.log('⚠️ Documento no existe en Firebase');
+            }
+          } catch (error) {
+            this.log('❌ Error procesando snapshot:', error);
+          }
+        },
+        (error) => {
+          this.log('❌ Error en listener:', error);
+          this.isOnlineMode = false;
+          
+          // Reintentar conexión después de un delay
+          setTimeout(() => {
+            this.log('🔄 Reintentando configurar listener...');
+            this.setupRealtimeListener();
+          }, 5000);
+        }
+      );
+      
+      this.log('✅ Listener configurado correctamente');
+    } catch (error) {
+      this.log('❌ Error configurando listener:', error);
+    }
+  },
+
+  // ============================================
+  // MERGE INTELIGENTE MEJORADO
+  // ============================================
+  intelligentMerge(firebaseData, localData) {
+    this.log('🧠 Ejecutando merge inteligente...');
+    
+    // Merge de mazos con prioridad por timestamp
+    const allDecks = [
+      ...(localData.decks || []),
+      ...(firebaseData.decks || [])
+    ];
+    const mergedDecks = this.mergeArraysById(allDecks);
+    
+    // Merge de cartas con prioridad por timestamp
+    const allCards = [
+      ...(localData.cards || []),
+      ...(firebaseData.cards || [])
+    ];
+    const mergedCards = this.mergeArraysById(allCards);
+    
+    // Merge de progreso con prioridad por lastUpdated más reciente
+    const mergedProgress = { ...localData.progress };
+    Object.keys(firebaseData.progress || {}).forEach(cardId => {
+      const firebaseProgressItem = firebaseData.progress[cardId];
+      const localProgressItem = mergedProgress[cardId];
+      
+      if (!localProgressItem || 
+          (firebaseProgressItem.lastUpdated && 
+           (!localProgressItem.lastUpdated || 
+            new Date(firebaseProgressItem.lastUpdated) > new Date(localProgressItem.lastUpdated)))) {
+        mergedProgress[cardId] = firebaseProgressItem;
+      }
+    });
+
+    const result = {
+      decks: mergedDecks,
+      cards: mergedCards,
+      progress: mergedProgress
+    };
+    
+    this.log('🔀 Merge completado:', {
+      decks: result.decks.length,
+      cards: result.cards.length,
+      progress: Object.keys(result.progress).length
+    });
+    
+    return result;
+  },
+
+  // ============================================
+  // VERIFICACIÓN DE CONEXIÓN MEJORADA
+  // ============================================
+  async checkConnectionWithTimeout(timeoutMs = 5000) {
+    try {
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Connection timeout')), timeoutMs);
+      });
+      
+      const testPromise = (async () => {
+        const testDoc = doc(db, 'chinese_flashcards', 'connection_test');
+        await getDoc(testDoc);
+        return true;
+      })();
+      
+      await Promise.race([testPromise, timeoutPromise]);
+      this.isOnlineMode = true;
+      return true;
+    } catch (error) {
+      this.log('📡 Verificación de conexión falló:', error.message);
+      this.isOnlineMode = false;
+      return false;
+    }
+  },
+
+  async checkConnection() {
+    return this.checkConnectionWithTimeout();
+  },
+
+  // ============================================
+  // SINCRONIZACIÓN INTELIGENTE MEJORADA
+  // ============================================
+  async smartSync(forceSync = false) {
+    // Prevenir sincronizaciones concurrentes
+    if (this.syncInProgress && !forceSync) {
+      this.log('⚠️ Sincronización ya en progreso, saltando...');
+      return await this.getLocalData();
+    }
+
+    this.syncInProgress = true;
+
+    try {
+      this.log('🧠 Iniciando sincronización inteligente...', { forceSync });
 
       // Verificar conectividad
-      const online = await this.isOnline();
+      const online = await this.checkConnectionWithTimeout();
       if (!online) {
-        console.log('📱 Sin conexión, usando datos locales');
+        this.log('📱 Modo offline, retornando datos locales');
         return await this.getLocalData();
       }
 
@@ -142,179 +345,170 @@ export const FirebaseSync = {
         this.getLocalData()
       ]);
 
-      // Si Firebase está vacío, subimos los datos locales
-      if (
-        (!firebaseData.decks || firebaseData.decks.length === 0) &&
-        (!firebaseData.cards || firebaseData.cards.length === 0)
-      ) {
-        console.log('⚠️ Firebase vacío, subiendo datos locales...');
-        await this.saveFirebaseData(localData);
-        return localData;
-      }
-
-      // Si local está vacío pero Firebase tiene datos, bajamos Firebase
-      if (
-        (!localData.decks || localData.decks.length === 0) &&
-        (!localData.cards || localData.cards.length === 0)
-      ) {
-        console.log('📥 Datos locales vacíos, descargando desde Firebase...');
-        await this.saveLocalData(firebaseData);
-        return firebaseData;
-      }
-
-      // MERGEAR datos
-      const mergedData = this.mergeData(firebaseData, localData);
-
-      console.log('🔀 Datos mergeados:', {
-        decks: mergedData.decks.length,
-        cards: mergedData.cards.length,
-        progress: Object.keys(mergedData.progress || {}).length
+      this.log('📊 Datos obtenidos:', {
+        firebase: {
+          decks: firebaseData.decks?.length || 0,
+          cards: firebaseData.cards?.length || 0,
+          progress: Object.keys(firebaseData.progress || {}).length,
+          syncVersion: firebaseData.syncVersion
+        },
+        local: {
+          decks: localData.decks?.length || 0,
+          cards: localData.cards?.length || 0,
+          progress: Object.keys(localData.progress || {}).length
+        }
       });
 
-      // Guardar datos mergeados en ambos lados
-      await Promise.all([
-        this.saveLocalData(mergedData),
-        this.saveFirebaseData(mergedData)
-      ]);
+      // Determinar estrategia de sincronización
+      const firebaseEmpty = this.isDataEmpty(firebaseData);
+      const localEmpty = this.isDataEmpty(localData);
 
-      console.log('✅ Sincronización completada');
-      return mergedData;
+      let finalData;
+
+      if (firebaseEmpty && !localEmpty) {
+        // Subir datos locales
+        this.log('⬆️ Firebase vacío, subiendo datos locales');
+        finalData = localData;
+        await this.saveFirebaseDataWithVersion(finalData);
+      } else if (localEmpty && !firebaseEmpty) {
+        // Descargar datos de Firebase
+        this.log('⬇️ Local vacío, descargando desde Firebase');
+        finalData = firebaseData;
+        await this.saveLocalDataOnly(finalData);
+      } else if (!firebaseEmpty && !localEmpty) {
+        // Mergear ambos
+        this.log('🔀 Ambos con datos, mergeando inteligentemente');
+        finalData = this.intelligentMerge(firebaseData, localData);
+        
+        await Promise.all([
+          this.saveLocalDataOnly(finalData),
+          this.saveFirebaseDataWithVersion(finalData)
+        ]);
+      } else {
+        // Ambos vacíos
+        this.log('📭 Ambos vacíos, inicializando estructura');
+        finalData = { decks: [], cards: [], progress: {} };
+      }
+
+      this.log('✅ Sincronización completada exitosamente');
+      return finalData;
 
     } catch (error) {
-      console.error('❌ Error en sincronización:', error);
-      // Fallback a datos locales
+      this.log('❌ Error en sincronización inteligente:', error);
       return await this.getLocalData();
+    } finally {
+      this.syncInProgress = false;
     }
   },
 
-  // MERGEAR datos de ambos lados (combinar lo mejor de ambos)
-  mergeData(firebaseData, localData) {
-    const mergedDecks = this.mergeDecks(firebaseData.decks || [], localData.decks || []);
-    const mergedCards = this.mergeCards(firebaseData.cards || [], localData.cards || []);
-    const mergedProgress = this.mergeProgress(firebaseData.progress || {}, localData.progress || {});
-
-    return {
-      decks: mergedDecks,
-      cards: mergedCards,
-      progress: mergedProgress
-    };
-  },
-
-  // Mergear mazos - combinar sin duplicados
-  mergeDecks(firebaseDecks, localDecks) {
-    const merged = new Map();
-    
-    // Agregar mazos locales primero
-    localDecks.forEach(deck => {
-      if (deck && deck.id) {
-        merged.set(deck.id, deck);
+  // ============================================
+  // GUARDADO CON VERSIONING
+  // ============================================
+  async saveFirebaseDataWithVersion(data) {
+    try {
+      if (!this.isOnlineMode && !(await this.checkConnectionWithTimeout())) {
+        this.log('📡 Sin conexión para guardar en Firebase');
+        return false;
       }
-    });
-    
-    // Agregar mazos de Firebase, actualizando si son más recientes
-    firebaseDecks.forEach(deck => {
-      if (deck && deck.id) {
-        const existing = merged.get(deck.id);
-        if (!existing || this.isNewer(deck, existing)) {
-          merged.set(deck.id, deck);
-        }
-      }
-    });
-    
-    return Array.from(merged.values());
-  },
 
-  // Mergear cartas - combinar sin duplicados
-  mergeCards(firebaseCards, localCards) {
-    const merged = new Map();
-    
-    // Agregar cartas locales primero
-    localCards.forEach(card => {
-      if (card && card.id) {
-        merged.set(card.id, card);
-      }
-    });
-    
-    // Agregar cartas de Firebase, actualizando si son más recientes
-    firebaseCards.forEach(card => {
-      if (card && card.id) {
-        const existing = merged.get(card.id);
-        if (!existing || this.isNewer(card, existing)) {
-          merged.set(card.id, card);
-        }
-      }
-    });
-    
-    return Array.from(merged.values());
-  },
-
-  // Mergear progreso - mantener el más reciente por carta
-  mergeProgress(firebaseProgress, localProgress) {
-    const merged = { ...localProgress };
-    
-    Object.keys(firebaseProgress || {}).forEach(cardId => {
-      const firebaseCardProgress = firebaseProgress[cardId];
-      const localCardProgress = merged[cardId];
+      const userDoc = doc(db, 'chinese_flashcards', PERSONAL_USER_ID);
       
-      if (!localCardProgress || this.isNewerProgress(firebaseCardProgress, localCardProgress)) {
-        merged[cardId] = firebaseCardProgress;
-      }
-    });
-    
-    return merged;
+      const syncVersion = Date.now();
+      const dataToSave = {
+        decks: data.decks || [],
+        cards: data.cards || [],
+        progress: data.progress || {},
+        lastUpdated: serverTimestamp(),
+        syncVersion: syncVersion,
+        device: this.getDeviceInfo(),
+        timestamp: new Date().toISOString()
+      };
+
+      await setDoc(userDoc, dataToSave);
+      this.lastSyncTimestamp = syncVersion;
+      
+      this.log('💾 Datos guardados en Firebase', {
+        syncVersion,
+        device: dataToSave.device,
+        decks: dataToSave.decks.length,
+        cards: dataToSave.cards.length
+      });
+      
+      return true;
+    } catch (error) {
+      this.log('❌ Error guardando en Firebase:', error);
+      this.isOnlineMode = false;
+      return false;
+    }
   },
 
-  // Verificar si un elemento es más nuevo que otro
-  isNewer(item1, item2) {
-    const date1 = new Date(item1.updatedAt || item1.createdAt || 0);
-    const date2 = new Date(item2.updatedAt || item2.createdAt || 0);
-    return date1 > date2;
+  // Guardar solo localmente (sin sincronizar)
+  async saveLocalDataOnly(data) {
+    try {
+      await Promise.all([
+        OfflineStorage.saveDecks(data.decks || []),
+        OfflineStorage.saveCards(data.cards || []),
+        OfflineStorage.saveProgress(data.progress || {})
+      ]);
+
+      localStorage.setItem('lastLocalUpdate', new Date().toISOString());
+      this.log('💾 Datos guardados localmente (solo local)');
+      return true;
+    } catch (error) {
+      this.log('❌ Error guardando localmente:', error);
+      return false;
+    }
   },
 
-  // Verificar si el progreso es más nuevo
-  isNewerProgress(progress1, progress2) {
-    const date1 = new Date(progress1.lastUpdated || 0);
-    const date2 = new Date(progress2.lastUpdated || 0);
-    return date1 > date2;
+  // Notificar actualización a la UI
+  notifyUIUpdate(data) {
+    try {
+      window.dispatchEvent(new CustomEvent('firebaseDataUpdated', {
+        detail: {
+          ...data,
+          source: 'firebase_listener',
+          timestamp: new Date().toISOString()
+        }
+      }));
+      this.log('📢 UI notificada de actualización');
+    } catch (error) {
+      this.log('❌ Error notificando UI:', error);
+    }
   },
 
-  // Obtener datos de Firebase - USANDO SIEMPRE EL ID FIJO
+  // ============================================
+  // MÉTODOS DE DATOS EXISTENTES MEJORADOS
+  // ============================================
+  
+  // Verificar si los datos están vacíos
+  isDataEmpty(data) {
+    return (!data.decks || data.decks.length === 0) && 
+           (!data.cards || data.cards.length === 0) &&
+           (!data.progress || Object.keys(data.progress).length === 0);
+  },
+
+  // Obtener datos de Firebase
   async getFirebaseData() {
     try {
-      const userDoc = doc(db, 'chinese_flashcards', this.getUserId()); // ID FIJO
+      const userDoc = doc(db, 'chinese_flashcards', PERSONAL_USER_ID);
       const docSnap = await getDoc(userDoc);
       
       if (docSnap.exists()) {
         const data = docSnap.data();
-        console.log('📥 Datos obtenidos de Firebase:', {
-          decks: (data.decks || []).length,
-          cards: (data.cards || []).length,
-          progress: Object.keys(data.progress || {}).length
-        });
-        
         return {
           decks: data.decks || [],
           cards: data.cards || [],
           progress: data.progress || {},
-          lastUpdated: data.lastUpdated
+          lastUpdated: data.lastUpdated,
+          syncVersion: data.syncVersion,
+          device: data.device
         };
       }
       
-      console.log('📭 No hay datos en Firebase para el ID fijo');
-      return {
-        decks: [],
-        cards: [],
-        progress: {},
-        lastUpdated: null
-      };
+      return { decks: [], cards: [], progress: {}, lastUpdated: null, syncVersion: 0 };
     } catch (error) {
-      console.error('❌ Error obteniendo datos de Firebase:', error);
-      return {
-        decks: [],
-        cards: [],
-        progress: {},
-        lastUpdated: null
-      };
+      this.log('❌ Error obteniendo datos de Firebase:', error);
+      return { decks: [], cards: [], progress: {}, lastUpdated: null, syncVersion: 0 };
     }
   },
 
@@ -327,288 +521,175 @@ export const FirebaseSync = {
         OfflineStorage.getProgress()
       ]);
 
-      console.log('📱 Datos locales obtenidos:', {
-        decks: decks.length,
-        cards: cards.length,
-        progress: Object.keys(progress).length
-      });
-
-      return { decks: decks || [], cards: cards || [], progress: progress || {} };
-    } catch (error) {
-      console.error('❌ Error obteniendo datos locales:', error);
-      return {
-        decks: [],
-        cards: [],
-        progress: {}
+      return { 
+        decks: decks || [], 
+        cards: cards || [], 
+        progress: progress || {} 
       };
-    }
-  },
-
-  // Guardar datos en Firebase - USANDO SIEMPRE EL ID FIJO
-  async saveFirebaseData(data) {
-    try {
-      const userDoc = doc(db, 'chinese_flashcards', this.getUserId()); // ID FIJO
-      
-      const dataToSave = {
-        decks: data.decks || [],
-        cards: data.cards || [],
-        progress: data.progress || {},
-        lastUpdated: serverTimestamp(),
-        deviceInfo: this.getDeviceInfo()
-      };
-
-      await setDoc(userDoc, dataToSave, { merge: false }); // merge: false para reemplazar completamente
-
-      console.log('💾 Datos guardados en Firebase con ID:', this.getUserId());
-      console.log('📊 Datos guardados:', {
-        decks: dataToSave.decks.length,
-        cards: dataToSave.cards.length,
-        progress: Object.keys(dataToSave.progress).length
-      });
-      
-      return true;
     } catch (error) {
-      console.error('❌ Error guardando en Firebase:', error);
-      return false;
+      this.log('❌ Error obteniendo datos locales:', error);
+      return { decks: [], cards: [], progress: {} };
     }
   },
 
-  // Guardar datos localmente
-  async saveLocalData(data) {
-    try {
-      await Promise.all([
-        OfflineStorage.saveDecks(data.decks || []),
-        OfflineStorage.saveCards(data.cards || []),
-        OfflineStorage.saveProgress(data.progress || {})
-      ]);
+  // ============================================
+  // FUNCIONES PRINCIPALES MEJORADAS
+  // ============================================
 
-      console.log('💾 Datos guardados localmente');
-      return true;
-    } catch (error) {
-      console.error('❌ Error guardando localmente:', error);
-      return false;
-    }
-  },
-
-  // FUNCIONES PRINCIPALES PARA LA APP
-
-  // Obtener mazos (con sincronización automática)
+  // Obtener mazos
   async getDecks() {
     if (!this.isInitialized) await this.initializeUser();
-    
     const data = await this.smartSync();
     return data.decks;
   },
 
-  // Guardar mazos (sincroniza automáticamente)
+  // Sincronizar mazos (VERSIÓN MEJORADA)
   async syncDecks(decks) {
     try {
-      // Guardar localmente primero (rápido)
-      await OfflineStorage.saveDecks(decks);
+      this.log('🔄 Sincronizando mazos...', { count: decks.length });
       
-      // Intentar guardar en Firebase (puede fallar si no hay conexión)
-      if (await this.isOnline()) {
+      const decksWithTimestamp = decks.map(deck => ({
+        ...deck,
+        updatedAt: new Date().toISOString()
+      }));
+
+      // Guardar localmente primero
+      await OfflineStorage.saveDecks(decksWithTimestamp);
+      localStorage.setItem('lastLocalUpdate', new Date().toISOString());
+      
+      // Sincronizar con Firebase si hay conexión
+      if (await this.checkConnectionWithTimeout()) {
         const currentData = await this.getLocalData();
-        await this.saveFirebaseData({
+        await this.saveFirebaseDataWithVersion({
           ...currentData,
-          decks: decks
+          decks: decksWithTimestamp
         });
       }
       
+      this.log('✅ Mazos sincronizados correctamente');
       return true;
     } catch (error) {
-      console.error('❌ Error sincronizando mazos:', error);
+      this.log('❌ Error sincronizando mazos:', error);
       return false;
     }
   },
 
-  // Obtener cartas (con sincronización automática)
+  // Obtener cartas
   async getCards() {
     if (!this.isInitialized) await this.initializeUser();
-    
     const data = await this.smartSync();
     return data.cards;
   },
 
-  // Guardar cartas (sincroniza automáticamente)
+  // Sincronizar cartas (VERSIÓN MEJORADA)
   async syncCards(cards) {
     try {
-      // Guardar localmente primero
-      await OfflineStorage.saveCards(cards);
+      this.log('🔄 Sincronizando cartas...', { count: cards.length });
       
-      // Intentar guardar en Firebase
-      if (await this.isOnline()) {
+      const cardsWithTimestamp = cards.map(card => ({
+        ...card,
+        updatedAt: new Date().toISOString()
+      }));
+
+      // Guardar localmente primero
+      await OfflineStorage.saveCards(cardsWithTimestamp);
+      localStorage.setItem('lastLocalUpdate', new Date().toISOString());
+      
+      // Sincronizar con Firebase si hay conexión
+      if (await this.checkConnectionWithTimeout()) {
         const currentData = await this.getLocalData();
-        await this.saveFirebaseData({
+        await this.saveFirebaseDataWithVersion({
           ...currentData,
-          cards: cards
+          cards: cardsWithTimestamp
         });
       }
       
+      this.log('✅ Cartas sincronizadas correctamente');
       return true;
     } catch (error) {
-      console.error('❌ Error sincronizando cartas:', error);
+      this.log('❌ Error sincronizando cartas:', error);
       return false;
     }
   },
 
-  // Obtener progreso (con sincronización automática)
+  // Obtener progreso
   async getProgress() {
     if (!this.isInitialized) await this.initializeUser();
-    
     const data = await this.smartSync();
     return data.progress;
   },
 
-  // Guardar progreso (sincroniza automáticamente)
+  // Sincronizar progreso (VERSIÓN MEJORADA)
   async syncProgress(progress) {
     try {
-      // Guardar localmente primero
-      await OfflineStorage.saveProgress(progress);
+      this.log('🔄 Sincronizando progreso...', { count: Object.keys(progress).length });
       
-      // Intentar guardar en Firebase
-      if (await this.isOnline()) {
+      const progressWithTimestamp = {};
+      Object.keys(progress).forEach(cardId => {
+        progressWithTimestamp[cardId] = {
+          ...progress[cardId],
+          lastUpdated: new Date().toISOString()
+        };
+      });
+
+      // Guardar localmente primero
+      await OfflineStorage.saveProgress(progressWithTimestamp);
+      localStorage.setItem('lastLocalUpdate', new Date().toISOString());
+      
+      // Sincronizar con Firebase si hay conexión
+      if (await this.checkConnectionWithTimeout()) {
         const currentData = await this.getLocalData();
-        await this.saveFirebaseData({
+        await this.saveFirebaseDataWithVersion({
           ...currentData,
-          progress: progress
+          progress: progressWithTimestamp
         });
       }
       
+      this.log('✅ Progreso sincronizado correctamente');
       return true;
     } catch (error) {
-      console.error('❌ Error sincronizando progreso:', error);
+      this.log('❌ Error sincronizando progreso:', error);
       return false;
     }
   },
 
-  // FUNCIÓN DE SINCRONIZACIÓN FORZADA (para botón de Sync)
+  // Sincronización forzada
   async forceSyncAll() {
     try {
-      console.log('🚀 SINCRONIZACIÓN FORZADA - Mergeando todo...');
-      console.log('🆔 Usando ID fijo:', this.getUserId());
+      this.log('🚀 Iniciando sincronización forzada');
       
-      const online = await this.isOnline();
+      const online = await this.checkConnectionWithTimeout();
       if (!online) {
-        console.log('❌ Sin conexión para sincronización forzada');
-        return { success: false, error: 'Sin conexión a internet' };
+        return { success: false, error: 'Sin conexión a Internet' };
       }
 
-      // Verificar y migrar datos existentes
-      await migrateExistingData();
-
-      // Obtener todos los datos
-      const [firebaseData, localData] = await Promise.all([
-        this.getFirebaseData(),
-        this.getLocalData()
-      ]);
-
-      console.log('📊 Datos antes del merge:');
-      console.log('  Firebase:', {
-        decks: firebaseData.decks.length,
-        cards: firebaseData.cards.length,
-        progress: Object.keys(firebaseData.progress).length
-      });
-      console.log('  Local:', {
-        decks: localData.decks.length,
-        cards: localData.cards.length,
-        progress: Object.keys(localData.progress).length
-      });
-
-      // Mergear TODO
-      const mergedData = this.mergeData(firebaseData, localData);
+      // Reiniciar listener
+      await this.setupRealtimeListener();
+      const result = await this.smartSync(true);
       
-      console.log('✅ Datos después del merge:', {
-        decks: mergedData.decks.length,
-        cards: mergedData.cards.length,
-        progress: Object.keys(mergedData.progress).length
-      });
-
-      // Guardar en ambos lados
-      await Promise.all([
-        this.saveLocalData(mergedData),
-        this.saveFirebaseData(mergedData)
-      ]);
-
-      console.log('🎉 Sincronización forzada completada con ID:', this.getUserId());
-      return { success: true, data: mergedData };
+      this.log('✅ Sincronización forzada completada');
+      return { success: true, data: result };
     } catch (error) {
-      console.error('❌ Error en sincronización forzada:', error);
+      this.log('❌ Error en sincronización forzada:', error);
       return { success: false, error: error.message };
     }
   },
 
-  // Forzar subida desde local a Firebase
-  async forceUpload() {
-    try {
-      console.log('⬆️ FORZANDO subida a Firebase con ID:', this.getUserId());
-      
-      const localData = await this.getLocalData();
-      const success = await this.saveFirebaseData(localData);
-      
-      if (success) {
-        console.log('✅ Subida forzada completada');
-        return { success: true, data: localData };
-      } else {
-        throw new Error('Error al subir a Firebase');
-      }
-    } catch (error) {
-      console.error('❌ Error en subida forzada:', error);
-      return { success: false, error: error.message };
+  // Limpiar recursos
+  cleanup() {
+    this.log('🧹 Limpiando recursos de FirebaseSync...');
+    
+    if (this.unsubscribeListener) {
+      this.unsubscribeListener();
+      this.unsubscribeListener = null;
     }
+    this.initPromise = null;
+    this.syncInProgress = false;
+    
+    this.log('✅ Recursos limpiados');
   },
 
-  // Forzar descarga desde Firebase
-  async forceDownload() {
-    try {
-      console.log('⬇️ FORZANDO descarga desde Firebase con ID:', this.getUserId());
-      
-      const firebaseData = await this.getFirebaseData();
-      
-      if (firebaseData.decks.length === 0 && firebaseData.cards.length === 0) {
-        return { success: false, error: 'No hay datos en Firebase' };
-      }
-
-      await this.saveLocalData(firebaseData);
-      
-      console.log('✅ Descarga forzada completada');
-      return { success: true, data: firebaseData };
-    } catch (error) {
-      console.error('❌ Error en descarga forzada:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
-  // Alias para compatibilidad
-  async forceSync() {
-    return await this.forceSyncAll();
-  },
-
-  // UTILIDADES
-
-  // Verificar conectividad
-  async isOnline() {
-    try {
-      const testDoc = doc(db, 'chinese_flashcards', 'connection_test');
-      await getDoc(testDoc);
-      return true;
-    } catch (error) {
-      return false;
-    }
-  },
-
-  // Obtener información del dispositivo
-  getDeviceInfo() {
-    return {
-      userAgent: navigator.userAgent,
-      platform: navigator.platform,
-      timestamp: new Date().toISOString(),
-      url: window.location.hostname,
-      fixedUserId: this.getUserId() // Incluir el ID fijo en la info
-    };
-  },
-
-  // Obtener estadísticas
+  // Obtener estadísticas mejoradas
   async getStats() {
     try {
       const [firebaseData, localData] = await Promise.all([
@@ -617,66 +698,30 @@ export const FirebaseSync = {
       ]);
 
       return {
-        userId: this.getUserId(),
+        userId: PERSONAL_USER_ID,
+        device: this.getDeviceInfo(),
+        online: this.isOnlineMode,
+        initialized: this.isInitialized,
+        syncInProgress: this.syncInProgress,
+        lastSyncTimestamp: this.lastSyncTimestamp,
         firebase: {
           decks: firebaseData.decks.length,
           cards: firebaseData.cards.length,
           progress: Object.keys(firebaseData.progress).length,
-          lastUpdated: firebaseData.lastUpdated
+          lastUpdated: firebaseData.lastUpdated,
+          syncVersion: firebaseData.syncVersion,
+          device: firebaseData.device
         },
         local: {
           decks: localData.decks.length,
           cards: localData.cards.length,
-          progress: Object.keys(localData.progress).length
-        },
-        online: await this.isOnline()
+          progress: Object.keys(localData.progress).length,
+          lastLocalUpdate: localStorage.getItem('lastLocalUpdate')
+        }
       };
     } catch (error) {
-      console.error('❌ Error obteniendo estadísticas:', error);
+      this.log('❌ Error obteniendo estadísticas:', error);
       return null;
-    }
-  },
-
-  // Limpiar datos (para debugging)
-  async clearAllData() {
-    try {
-      // Limpiar Firebase con el ID fijo
-      await this.saveFirebaseData({
-        decks: [],
-        cards: [],
-        progress: {}
-      });
-      
-      // Limpiar local
-      await OfflineStorage.clearAllData();
-      
-      console.log('🗑️ Todos los datos limpiados del ID:', this.getUserId());
-      return true;
-    } catch (error) {
-      console.error('❌ Error limpiando datos:', error);
-      return false;
-    }
-  },
-
-  // FUNCIÓN ESPECIAL: Migrar manualmente todos los datos al ID fijo
-  async migrateAllDataToFixedId() {
-    try {
-      console.log('🔄 Iniciando migración manual de todos los datos...');
-      
-      const result = await migrateExistingData();
-      
-      if (result) {
-        console.log('✅ Migración manual completada');
-        // Realizar sincronización después de la migración
-        await this.smartSync();
-        return { success: true, message: 'Datos migrados exitosamente' };
-      } else {
-        console.log('ℹ️ No había datos para migrar');
-        return { success: true, message: 'No había datos para migrar' };
-      }
-    } catch (error) {
-      console.error('❌ Error en migración manual:', error);
-      return { success: false, error: error.message };
     }
   }
 };

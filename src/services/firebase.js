@@ -1,8 +1,11 @@
-// src/services/firebase.js
+// src/services/firebase.js - CONFIGURACIÓN MEJORADA PARA SINCRONIZACIÓN BIDIRECCIONAL
 import { initializeApp } from "firebase/app";
-import { getFirestore, connectFirestoreEmulator, enableNetwork, disableNetwork } from "firebase/firestore";
-// Analytics comentado para evitar problemas con bloqueadores de anuncios
-// import { getAnalytics } from "firebase/analytics";
+import { 
+  getFirestore,
+  enableNetwork,
+  disableNetwork,
+  connectFirestoreEmulator
+} from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDHM-P0oVfUv_8vGNODDOaQi4PUfmwhMmE",
@@ -14,80 +17,350 @@ const firebaseConfig = {
   measurementId: "G-QBJY3QNWMV"
 };
 
-// Initialize Firebase
+// Initialize Firebase - UNA SOLA VEZ
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore
+// Initialize Firestore con configuración optimizada
 const db = getFirestore(app);
 
-// Configurar persistencia offline de Firestore
-// Esto permite que Firestore funcione sin conexión
-const initializeFirestore = async () => {
-  try {
-    // Habilitar persistencia offline
-    await enableNetwork(db);
-    console.log('🔥 Firebase inicializado correctamente');
-    console.log('📊 Firestore conectado con persistencia offline');
-    console.log('🌐 Proyecto:', firebaseConfig.projectId);
-  } catch (error) {
-    console.error('❌ Error al inicializar Firestore:', error);
-    
-    // Si falla la inicialización, intentar en modo offline
+// Estado de conexión mejorado
+let connectionState = 'initializing';
+let initializationPromise = null;
+let connectionMonitorInterval = null;
+let isEmulatorMode = false;
+
+// Logging mejorado
+const log = (message, data = null) => {
+  const timestamp = new Date().toISOString();
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const device = isMobile ? 'Mobile' : 'Desktop';
+  console.log(`[Firebase][${device}][${timestamp}] ${message}`, data || '');
+};
+
+// Función de inicialización mejorada
+const initializeFirestoreConnection = async () => {
+  if (initializationPromise) {
+    log('⏳ Inicialización ya en progreso...');
+    return initializationPromise;
+  }
+
+  initializationPromise = (async () => {
     try {
-      await disableNetwork(db);
-      console.log('📱 Firestore iniciado en modo offline');
-    } catch (offlineError) {
-      console.error('❌ Error crítico al inicializar Firestore:', offlineError);
+      log('🔥 Inicializando Firestore...');
+      
+      // Configurar emulador en desarrollo si está disponible
+      if (process.env.NODE_ENV === 'development' && process.env.REACT_APP_USE_FIRESTORE_EMULATOR === 'true') {
+        try {
+          connectFirestoreEmulator(db, 'localhost', 8080);
+          isEmulatorMode = true;
+          log('🔧 Conectado al emulador de Firestore');
+        } catch (error) {
+          log('⚠️ No se pudo conectar al emulador, usando producción');
+        }
+      }
+      
+      // Habilitar la red con reintentos
+      await enableNetworkWithRetry();
+      connectionState = 'online';
+      
+      log('✅ Firestore inicializado correctamente', {
+        emulator: isEmulatorMode,
+        state: connectionState
+      });
+      
+      return true;
+    } catch (error) {
+      log('❌ Error inicializando Firestore:', error);
+      connectionState = 'offline';
+      return false;
+    }
+  })();
+
+  return initializationPromise;
+};
+
+// Función para habilitar la red con reintentos
+const enableNetworkWithRetry = async (maxRetries = 3) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      log(`🌐 Intento ${attempt}/${maxRetries} de habilitar red...`);
+      await enableNetwork(db);
+      return true;
+    } catch (error) {
+      log(`❌ Error en intento ${attempt}:`, error.message);
+      if (attempt === maxRetries) {
+        throw error;
+      }
+      // Esperar antes del siguiente intento
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
     }
   }
 };
 
-// Inicializar cuando se carga el módulo
-initializeFirestore();
-
-// Función para verificar el estado de la conexión
-export const checkFirestoreConnection = async () => {
+// Función para verificar conexión mejorada con timeout personalizable
+export const checkFirestoreConnection = async (timeoutMs = 5000) => {
   try {
-    await enableNetwork(db);
+    log('🔍 Verificando conexión...');
+    
+    const { doc, getDoc } = await import('firebase/firestore');
+    const testRef = doc(db, 'connection_test', 'ping');
+    
+    // Promise de timeout
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`Connection timeout after ${timeoutMs}ms`)), timeoutMs);
+    });
+    
+    // Promise de prueba de conexión
+    const testPromise = getDoc(testRef);
+    
+    await Promise.race([testPromise, timeoutPromise]);
+    
+    connectionState = 'online';
+    log('✅ Conexión verificada exitosamente');
     return true;
   } catch (error) {
-    console.log('📡 Firestore offline');
+    log('📡 Verificación de conexión falló:', error.message);
+    connectionState = 'offline';
     return false;
   }
 };
 
-// Función para forzar modo offline
+// Función para ir offline con limpieza
 export const goOffline = async () => {
   try {
+    log('📱 Deshabilitando red...');
     await disableNetwork(db);
-    console.log('📱 Firestore cambiado a modo offline');
+    connectionState = 'offline';
+    log('✅ Firestore offline');
     return true;
   } catch (error) {
-    console.error('❌ Error al cambiar a modo offline:', error);
+    log('❌ Error al ir offline:', error);
     return false;
   }
 };
 
-// Función para volver online
+// Función para ir online con verificación
 export const goOnline = async () => {
   try {
-    await enableNetwork(db);
-    console.log('🌐 Firestore cambiado a modo online');
-    return true;
+    log('🌐 Habilitando red...');
+    await enableNetworkWithRetry();
+    
+    // Verificar que la conexión funciona realmente
+    const isConnected = await checkFirestoreConnection();
+    
+    if (isConnected) {
+      connectionState = 'online';
+      log('✅ Firestore online y verificado');
+      
+      // Disparar evento personalizado para notificar reconexión
+      window.dispatchEvent(new CustomEvent('firestoreReconnected', {
+        detail: { timestamp: new Date().toISOString() }
+      }));
+      
+      return true;
+    } else {
+      connectionState = 'offline';
+      log('⚠️ Red habilitada pero sin conectividad real');
+      return false;
+    }
   } catch (error) {
-    console.error('❌ Error al cambiar a modo online:', error);
+    log('❌ Error al ir online:', error);
+    connectionState = 'offline';
     return false;
   }
 };
 
-// Analytics deshabilitado para evitar bloqueos
-// const analytics = getAnalytics(app);
+// Obtener estado de conexión detallado
+export const getConnectionState = () => {
+  return {
+    state: connectionState,
+    emulator: isEmulatorMode,
+    timestamp: new Date().toISOString(),
+    userAgent: navigator.userAgent,
+    online: navigator.onLine
+  };
+};
 
-// Información de debug
-console.log('📋 Configuración Firebase:');
-console.log('  - Proyecto ID:', firebaseConfig.projectId);
-console.log('  - Auth Domain:', firebaseConfig.authDomain);
-console.log('  - Storage Bucket:', firebaseConfig.storageBucket);
+// Monitor de conexión inteligente
+const startConnectionMonitor = () => {
+  if (connectionMonitorInterval) {
+    log('🔄 Reiniciando monitor de conexión...');
+    clearInterval(connectionMonitorInterval);
+  }
 
+  log('👁️ Iniciando monitor de conexión...');
+
+  // Monitor principal cada 30 segundos
+  connectionMonitorInterval = setInterval(async () => {
+    if (connectionState === 'offline') {
+      log('🔄 Estado offline detectado, verificando reconexión...');
+      const isOnline = await checkFirestoreConnection(3000); // Timeout más corto para el monitor
+      if (isOnline) {
+        log('🎉 Reconexión detectada!');
+        window.dispatchEvent(new CustomEvent('firestoreReconnected', {
+          detail: { 
+            timestamp: new Date().toISOString(),
+            source: 'monitor'
+          }
+        }));
+      }
+    }
+  }, 30000); // Cada 30 segundos
+
+  // Escuchar eventos del navegador
+  const handleBrowserOnline = async () => {
+    log('🌐 Evento online del navegador detectado');
+    setTimeout(async () => {
+      await goOnline();
+    }, 1000); // Pequeño delay para que la conexión se estabilice
+  };
+
+  const handleBrowserOffline = () => {
+    log('📡 Evento offline del navegador detectado');
+    connectionState = 'offline';
+    window.dispatchEvent(new CustomEvent('firestoreDisconnected', {
+      detail: { 
+        timestamp: new Date().toISOString(),
+        source: 'browser'
+      }
+    }));
+  };
+
+  // Escuchar cambios de visibilidad para verificar conexión al volver
+  const handleVisibilityChange = async () => {
+    if (document.visibilityState === 'visible' && connectionState === 'offline') {
+      log('👁️ Página visible nuevamente, verificando conexión...');
+      setTimeout(async () => {
+        await checkFirestoreConnection();
+      }, 500);
+    }
+  };
+
+  window.addEventListener('online', handleBrowserOnline);
+  window.addEventListener('offline', handleBrowserOffline);
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+
+  // Función de limpieza
+  return () => {
+    log('🧹 Limpiando monitor de conexión...');
+    if (connectionMonitorInterval) {
+      clearInterval(connectionMonitorInterval);
+      connectionMonitorInterval = null;
+    }
+    window.removeEventListener('online', handleBrowserOnline);
+    window.removeEventListener('offline', handleBrowserOffline);
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+  };
+};
+
+// Función de limpieza completa
+export const cleanup = async () => {
+  try {
+    log('🧹 Iniciando limpieza completa de Firebase...');
+    
+    if (connectionMonitorInterval) {
+      clearInterval(connectionMonitorInterval);
+      connectionMonitorInterval = null;
+    }
+    
+    await disableNetwork(db);
+    connectionState = 'offline';
+    
+    log('✅ Limpieza completa de Firebase completada');
+  } catch (error) {
+    log('❌ Error durante limpieza:', error);
+  }
+};
+
+// Función para reinicializar la conexión
+const reinitializeConnection = async () => {
+  try {
+    log('🔄 Reinicializando conexión...');
+    
+    // Limpiar estado anterior
+    if (connectionMonitorInterval) {
+      clearInterval(connectionMonitorInterval);
+    }
+    
+    // Reinicializar
+    initializationPromise = null;
+    const result = await initializeFirestoreConnection();
+    
+    if (result) {
+      cleanupFunction = startConnectionMonitor();
+    }
+    
+    return result;
+  } catch (error) {
+    log('❌ Error reinicializando:', error);
+    return false;
+  }
+};
+
+// Función para obtener métricas de rendimiento
+const getPerformanceMetrics = () => {
+  return {
+    connectionState,
+    isEmulatorMode,
+    initializationTime: initializationPromise ? 'completed' : 'pending',
+    monitorActive: !!connectionMonitorInterval,
+    browserOnline: navigator.onLine,
+    timestamp: new Date().toISOString()
+  };
+};
+
+// Inicialización automática mejorada
+let cleanupFunction = null;
+
+const initialize = async () => {
+  try {
+    log('🚀 Iniciando inicialización automática...');
+    
+    const success = await initializeFirestoreConnection();
+    
+    if (success) {
+      cleanupFunction = startConnectionMonitor();
+      log('📋 Inicialización completada:', {
+        project: firebaseConfig.projectId,
+        state: connectionState,
+        emulator: isEmulatorMode
+      });
+    } else {
+      log('⚠️ Inicialización falló, reintentando en 5 segundos...');
+      setTimeout(initialize, 5000);
+    }
+  } catch (error) {
+    log('❌ Error en inicialización automática:', error);
+    setTimeout(initialize, 5000);
+  }
+};
+
+// Inicializar una sola vez al cargar el módulo
+initialize().catch(error => {
+  log('❌ Error crítico en inicialización:', error);
+});
+
+// Manejar beforeunload para limpieza
+window.addEventListener('beforeunload', () => {
+  if (cleanupFunction) {
+    cleanupFunction();
+  }
+});
+
+// Exportar instancias y funciones principales
 export { db, app };
 export default db;
+
+// Exportar función de limpieza total
+export const cleanupAll = () => {
+  log('🧹 Ejecutando limpieza total...');
+  if (cleanupFunction) {
+    cleanupFunction();
+    cleanupFunction = null;
+  }
+  return cleanup();
+};
+
+// Exportar funciones de utilidad (nombres únicos)
+export const reinitialize = reinitializeConnection;
+export { getPerformanceMetrics, initializeFirestoreConnection };
