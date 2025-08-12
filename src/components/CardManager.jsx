@@ -63,32 +63,37 @@ const CardManager = ({
 
   // Tipos de tarjetas disponibles
   const cardTypes = [
-    { 
-      value: 'basic', 
-      label: '📚 Básica (y tarjeta invertida)',
-      description: 'Anverso: Chino → Inglés | Reverso: Inglés → Chino'
-    },
-    { 
-      value: 'basic-typing', 
-      label: '⌨️ Básica (teclear la respuesta)',
-      description: 'Anverso: Inglés | Reverso: Teclear Chino'
-    },
-    { 
-      value: 'image-recognition', 
-      label: '🖼️ Imagen (reconocimiento)',
-      description: 'Anverso: Imagen | Reverso: Opciones múltiples'
-    },
-    { 
-      value: 'image-typing', 
-      label: '🖼️ Imagen (teclear pinyin)',
-      description: 'Anverso: Imagen | Reverso: Teclear Pinyin'
-    },
-    { 
-      value: 'audio-typing', 
-      label: '🔊 Audio (teclear lo que escuchas)',
-      description: 'Anverso: Audio | Reverso: Teclear Pinyin'
-    }
-  ];
+  { 
+    value: 'basic', 
+    label: '📚 Básica (Chino → Inglés)',
+    description: 'Anverso: Chino | Reverso: Inglés'
+  },
+  { 
+    value: 'basic-reverse', 
+    label: '📚 Básica Invertida (Inglés → Chino)',
+    description: 'Anverso: Inglés | Reverso: Chino'
+  },
+  { 
+    value: 'basic-typing', 
+    label: '⌨️ Básica (teclear la respuesta)',
+    description: 'Anverso: Inglés | Reverso: Teclear Chino'
+  },
+  { 
+    value: 'image-recognition', 
+    label: '🖼️ Imagen (reconocimiento)',
+    description: 'Anverso: Imagen | Reverso: Opciones múltiples'
+  },
+  { 
+    value: 'image-typing', 
+    label: '🖼️ Imagen (teclear pinyin)',
+    description: 'Anverso: Imagen | Reverso: Teclear Pinyin'
+  },
+  { 
+    value: 'audio-typing', 
+    label: '🔊 Audio (teclear lo que escuchas)',
+    description: 'Anverso: Audio | Reverso: Teclear Pinyin'
+  }
+];
 
   const availableIcons = ['📚', '🎯', '🧠', '💡', '🚀', '⭐', '🔥', '💪', '🎨', '🔬','⛩️'];
   const availableColors = [
@@ -253,6 +258,8 @@ const CardManager = ({
     // Validaciones específicas por tipo de tarjeta
     switch (newCard.cardType) {
       case 'basic':
+      case 'basic-reverse':  // AGREGAR ESTA LÍNEA
+
         if (!newCard.chinese || !newCard.english) {
           alert('Por favor completa Chino e Inglés');
           return;
@@ -337,13 +344,14 @@ const CardManager = ({
       difficulty: 'easy',
       deckId: targetDeck.id,
       deckName: targetDeck.name,
-      cardType: 'basic',
+      cardType: newCard.cardType,
       imageUrl: '',
       audioUrl: '',
       correctOption: '',
       wrongOption1: '',
       wrongOption2: ''
     });
+    
   };
 
   const handleChange = (e) => {
@@ -415,6 +423,7 @@ const CardManager = ({
   const getCardTypeIcon = (cardType) => {
     const icons = {
       'basic': '📚',
+      'basic-reverse': '📚↩️',  // AGREGAR ESTA LÍNEA
       'basic-typing': '⌨️',
       'image-recognition': '🖼️',
       'image-typing': '🖼️⌨️',
@@ -429,6 +438,7 @@ const CardManager = ({
   const renderFieldsForCardType = () => {
     switch (newCard.cardType) {
       case 'basic':
+      case 'basic-reverse':
         return (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>

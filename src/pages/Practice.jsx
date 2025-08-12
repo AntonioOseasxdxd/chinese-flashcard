@@ -527,7 +527,28 @@ const Practice = ({
             </div>
           </div>
         );
-
+        case 'basic-reverse':  // AGREGAR ESTE CASO COMPLETO
+  return (
+    <div className="flashcard">
+      <div className="card-content">
+        <div className="card-category">{currentCard.category}</div>
+        {currentSide === 'front' ? (
+          <div className="card-front">
+            <h2>{currentCard.english}</h2>
+            <p>¿Qué significa en chino?</p>
+          </div>
+        ) : (
+          <div className="card-back">
+            <h2>{currentCard.chinese}</h2>
+            {settings.showPinyin && <p className="pinyin">{currentCard.pinyin}</p>}
+          </div>
+        )}
+        <button className="btn-secondary" onClick={flipCard}>
+          🔄 Voltear tarjeta
+        </button>
+      </div>
+    </div>
+  );
       case 'basic-typing':
         return (
           <div className="flashcard">
@@ -931,7 +952,7 @@ const Practice = ({
 
         <div className="practice-buttons">
           {/* Botones para tarjetas básicas */}
-          {currentCard.cardType === 'basic' && (
+          {(currentCard.cardType === 'basic' || currentCard.cardType === 'basic-reverse') && (  // MODIFICAR ESTA LÍNEA
             <>
               {!showAnswer ? (
                 <button className="btn-primary" onClick={handleShowAnswer}>
