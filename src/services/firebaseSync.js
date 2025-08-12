@@ -13,7 +13,7 @@ import {
 import { OfflineStorage } from './offlineStorage';
 
 // ID FIJO para tu uso personal - SIEMPRE EL MISMO EN TODOS LOS DISPOSITIVOS
-const PERSONAL_USER_ID = 'my_chinese_flashcards_personal';
+const PERSONAL_USER_ID = 'kaWlDN6wBq2wrutghPuf';
 
 // ⚠️ FUNCIÓN PARA MIGRAR DATOS EXISTENTES A ID FIJO
 const migrateExistingData = async () => {
