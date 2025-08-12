@@ -9,12 +9,14 @@ import Navigation from './components/Navigation';
 import CardManager from './components/CardManager';
 import DataInitializer from './components/DataInitializer';
 import ClearDataButton from './components/ClearDataButton';
+import FirebaseDiagnostic from './components/FirebaseDiagnostic';
 
 // Pages
 import Home from './pages/Home';
 import Practice from './pages/Practice';
 import Progress from './pages/Progress';
 import Settings from './pages/Settings';
+
 
 // Hooks
 import { useFlashcards } from './hooks/useFlashcards';
@@ -33,6 +35,7 @@ function App() {
   const [showDataInitializer, setShowDataInitializer] = useState(false);
   const [showClearData, setShowClearData] = useState(false);
   const [showDeckManager, setShowDeckManager] = useState(false);
+  {process.env.NODE_ENV === 'development' && <FirebaseDiagnostic />}
 
   // ============================================
   // SISTEMA DE TOASTS

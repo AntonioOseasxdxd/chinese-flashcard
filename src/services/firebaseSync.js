@@ -1,41 +1,26 @@
-// src/services/firebaseSync.js (ACTUALIZADO CON SOPORTE PARA MAZOS)
-// NOTA: Este archivo necesitará ser adaptado según tu configuración específica de Firebase
-// Aquí muestro la estructura y métodos necesarios para el soporte de mazos
-
+// src/services/firebaseSync.js - IMPLEMENTACIÓN REAL CON FIRESTORE
+import { db } from './firebase';
+import { 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  collection, 
+  getDocs, 
+  writeBatch,
+  serverTimestamp 
+} from 'firebase/firestore';
 import { OfflineStorage } from './offlineStorage';
 
-// Simulación de Firebase - reemplazar con tu configuración real
-class MockFirebase {
-  constructor() {
-    this.data = {
-      users: {},
-      decks: {},
-      cards: {},
-      progress: {}
-    };
-    this.currentUserId = 'anonymous_user';
-  }
-
-  async get(path) {
-    // Simular delay de red
-    await new Promise(resolve => setTimeout(resolve, 100));
-    return this.data[path] || {};
-  }
-
-  async set(path, data) {
-    await new Promise(resolve => setTimeout(resolve, 50));
-    this.data[path] = data;
-    return true;
-  }
-
-  async update(path, data) {
-    await new Promise(resolve => setTimeout(resolve, 50));
-    this.data[path] = { ...this.data[path], ...data };
-    return true;
-  }
-}
-
-const mockFirebase = new MockFirebase();
+// Generar ID único para usuarios anónimos
+const generateUserId = () => {
+  const stored = localStorage.getItem('chinese_flashcards_user_id');
+  if (stored) return stored;
+  
+  const newId = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  localStorage.setItem('chinese_flashcards_user_id', newId);
+  return newId;
+};
 
 export const FirebaseSync = {
   currentUser: null,
@@ -44,40 +29,64 @@ export const FirebaseSync = {
   // Inicializar usuario
   async initializeUser(userId = null) {
     try {
-      this.currentUser = userId || 'anonymous_user';
+      this.currentUser = userId || generateUserId();
       this.isInitialized = true;
       
-      // Migrar cartas existentes si es necesario
-      await OfflineStorage.migrateCardsToDecks();
+      console.log('🔥 Firebase initialized for user:', this.currentUser);
       
-      console.log('Firebase initialized for user:', this.currentUser);
+      // Verificar si es la primera vez y migrar datos si es necesario
+      await this.migrateToDecksSystem();
+      
       return true;
     } catch (error) {
-      console.error('Error initializing Firebase user:', error);
+      console.error('❌ Error initializing Firebase user:', error);
       return false;
     }
   },
 
-  // NUEVO: Gestión de mazos en Firebase
+  // Verificar conectividad
+  async isOnline() {
+    try {
+      // Intentar leer un documento pequeño de prueba
+      const testDoc = doc(db, 'chinese_flashcards', this.currentUser || 'test');
+      await getDoc(testDoc);
+      return true;
+    } catch (error) {
+      console.log('📡 Offline mode - Firebase not reachable');
+      return false;
+    }
+  },
+
+  // GESTIÓN DE MAZOS
   async getDecks() {
     try {
       if (!this.isInitialized) await this.initializeUser();
       
-      const firebaseDecks = await mockFirebase.get(`users/${this.currentUser}/decks`);
-      const decksArray = Object.values(firebaseDecks || {});
+      console.log('📚 Getting decks from Firebase...');
+      const userDoc = doc(db, 'chinese_flashcards', this.currentUser);
+      const docSnap = await getDoc(userDoc);
       
-      // Si no hay mazos en Firebase, cargar desde almacenamiento local
-      if (decksArray.length === 0) {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const decks = data.decks || [];
+        console.log(`✅ Got ${decks.length} decks from Firebase`);
+        
+        // Guardar en cache local
+        await OfflineStorage.saveDecks(decks);
+        return decks;
+      } else {
+        console.log('📂 No decks found in Firebase, checking local...');
         const localDecks = await OfflineStorage.getDecks();
+        
         if (localDecks.length > 0) {
+          console.log(`📤 Uploading ${localDecks.length} local decks to Firebase...`);
           await this.syncDecks(localDecks);
-          return localDecks;
         }
+        
+        return localDecks;
       }
-      
-      return decksArray;
     } catch (error) {
-      console.error('Error getting decks from Firebase:', error);
+      console.error('❌ Error getting decks from Firebase:', error);
       // Fallback a datos locales
       return await OfflineStorage.getDecks();
     }
@@ -87,50 +96,70 @@ export const FirebaseSync = {
     try {
       if (!this.isInitialized) await this.initializeUser();
       
-      const decksObject = decks.reduce((acc, deck) => {
-        acc[deck.id] = deck;
-        return acc;
-      }, {});
+      console.log(`📤 Syncing ${decks.length} decks to Firebase...`);
       
-      await mockFirebase.set(`users/${this.currentUser}/decks`, decksObject);
+      const userDoc = doc(db, 'chinese_flashcards', this.currentUser);
+      const docSnap = await getDoc(userDoc);
+      
+      const currentData = docSnap.exists() ? docSnap.data() : {};
+      
+      await setDoc(userDoc, {
+        ...currentData,
+        decks: decks,
+        lastUpdated: serverTimestamp()
+      }, { merge: true });
+      
+      // Guardar también localmente
       await OfflineStorage.saveDecks(decks);
       
-      console.log('Decks synced successfully');
+      console.log('✅ Decks synced successfully');
       return true;
     } catch (error) {
-      console.error('Error syncing decks:', error);
+      console.error('❌ Error syncing decks:', error);
       // Guardar localmente aunque falle Firebase
       await OfflineStorage.saveDecks(decks);
       return false;
     }
   },
 
-  // Gestión de cartas (ACTUALIZADO para incluir deckId)
+  // GESTIÓN DE CARTAS
   async getCards() {
     try {
       if (!this.isInitialized) await this.initializeUser();
       
-      const firebaseCards = await mockFirebase.get(`users/${this.currentUser}/cards`);
-      const cardsArray = Object.values(firebaseCards || {});
+      console.log('🃏 Getting cards from Firebase...');
+      const userDoc = doc(db, 'chinese_flashcards', this.currentUser);
+      const docSnap = await getDoc(userDoc);
       
-      // Asegurar que todas las cartas tienen deckId
-      const cardsWithDeckId = cardsArray.map(card => ({
-        ...card,
-        deckId: card.deckId || 'default',
-        deckName: card.deckName || '📚 Mazo Principal'
-      }));
-      
-      if (cardsWithDeckId.length === 0) {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        let cards = data.cards || [];
+        
+        // Asegurar que todas las cartas tienen deckId
+        cards = cards.map(card => ({
+          ...card,
+          deckId: card.deckId || 'default',
+          deckName: card.deckName || '📚 Mazo Principal'
+        }));
+        
+        console.log(`✅ Got ${cards.length} cards from Firebase`);
+        
+        // Guardar en cache local
+        await OfflineStorage.saveCards(cards);
+        return cards;
+      } else {
+        console.log('📂 No cards found in Firebase, checking local...');
         const localCards = await OfflineStorage.getCards();
+        
         if (localCards.length > 0) {
+          console.log(`📤 Uploading ${localCards.length} local cards to Firebase...`);
           await this.syncCards(localCards);
-          return localCards;
         }
+        
+        return localCards;
       }
-      
-      return cardsWithDeckId;
     } catch (error) {
-      console.error('Error getting cards from Firebase:', error);
+      console.error('❌ Error getting cards from Firebase:', error);
       return await OfflineStorage.getCards();
     }
   },
@@ -139,6 +168,8 @@ export const FirebaseSync = {
     try {
       if (!this.isInitialized) await this.initializeUser();
       
+      console.log(`📤 Syncing ${cards.length} cards to Firebase...`);
+      
       // Asegurar que todas las cartas tienen deckId
       const cardsWithDeckId = cards.map(card => ({
         ...card,
@@ -146,41 +177,60 @@ export const FirebaseSync = {
         deckName: card.deckName || '📚 Mazo Principal'
       }));
       
-      const cardsObject = cardsWithDeckId.reduce((acc, card) => {
-        acc[card.id] = card;
-        return acc;
-      }, {});
+      const userDoc = doc(db, 'chinese_flashcards', this.currentUser);
+      const docSnap = await getDoc(userDoc);
       
-      await mockFirebase.set(`users/${this.currentUser}/cards`, cardsObject);
+      const currentData = docSnap.exists() ? docSnap.data() : {};
+      
+      await setDoc(userDoc, {
+        ...currentData,
+        cards: cardsWithDeckId,
+        lastUpdated: serverTimestamp()
+      }, { merge: true });
+      
+      // Guardar también localmente
       await OfflineStorage.saveCards(cardsWithDeckId);
       
-      console.log('Cards synced successfully');
+      console.log('✅ Cards synced successfully');
       return true;
     } catch (error) {
-      console.error('Error syncing cards:', error);
+      console.error('❌ Error syncing cards:', error);
       await OfflineStorage.saveCards(cards);
       return false;
     }
   },
 
-  // Gestión de progreso
+  // GESTIÓN DE PROGRESO
   async getProgress() {
     try {
       if (!this.isInitialized) await this.initializeUser();
       
-      const firebaseProgress = await mockFirebase.get(`users/${this.currentUser}/progress`);
+      console.log('📊 Getting progress from Firebase...');
+      const userDoc = doc(db, 'chinese_flashcards', this.currentUser);
+      const docSnap = await getDoc(userDoc);
       
-      if (!firebaseProgress || Object.keys(firebaseProgress).length === 0) {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const progress = data.progress || {};
+        
+        console.log(`✅ Got progress for ${Object.keys(progress).length} cards from Firebase`);
+        
+        // Guardar en cache local
+        await OfflineStorage.saveProgress(progress);
+        return progress;
+      } else {
+        console.log('📂 No progress found in Firebase, checking local...');
         const localProgress = await OfflineStorage.getProgress();
+        
         if (Object.keys(localProgress).length > 0) {
+          console.log(`📤 Uploading local progress to Firebase...`);
           await this.syncProgress(localProgress);
-          return localProgress;
         }
+        
+        return localProgress;
       }
-      
-      return firebaseProgress || {};
     } catch (error) {
-      console.error('Error getting progress from Firebase:', error);
+      console.error('❌ Error getting progress from Firebase:', error);
       return await OfflineStorage.getProgress();
     }
   },
@@ -189,43 +239,74 @@ export const FirebaseSync = {
     try {
       if (!this.isInitialized) await this.initializeUser();
       
-      await mockFirebase.set(`users/${this.currentUser}/progress`, progress);
+      console.log(`📤 Syncing progress for ${Object.keys(progress).length} cards...`);
+      
+      const userDoc = doc(db, 'chinese_flashcards', this.currentUser);
+      const docSnap = await getDoc(userDoc);
+      
+      const currentData = docSnap.exists() ? docSnap.data() : {};
+      
+      await setDoc(userDoc, {
+        ...currentData,
+        progress: progress,
+        lastUpdated: serverTimestamp()
+      }, { merge: true });
+      
+      // Guardar también localmente
       await OfflineStorage.saveProgress(progress);
       
-      console.log('Progress synced successfully');
+      console.log('✅ Progress synced successfully');
       return true;
     } catch (error) {
-      console.error('Error syncing progress:', error);
+      console.error('❌ Error syncing progress:', error);
       await OfflineStorage.saveProgress(progress);
       return false;
     }
   },
 
-  // Sincronización completa (ACTUALIZADO para incluir mazos)
-  async forcSync() {
+  // SINCRONIZACIÓN COMPLETA
+  async forceSync() {
     try {
       if (!this.isInitialized) await this.initializeUser();
       
-      console.log('Starting full sync...');
+      console.log('🔄 Starting full sync...');
       
-      // Obtener datos de Firebase
-      const [firebaseDecks, firebaseCards, firebaseProgress] = await Promise.all([
-        this.getDecks(),
-        this.getCards(),
-        this.getProgress()
-      ]);
+      // Verificar conectividad
+      const online = await this.isOnline();
+      if (!online) {
+        console.log('📱 Device offline, using local data');
+        const localDecks = await OfflineStorage.getDecks();
+        const localCards = await OfflineStorage.getCards();
+        const localProgress = await OfflineStorage.getProgress();
+        
+        return {
+          success: false,
+          decks: localDecks,
+          cards: localCards,
+          progress: localProgress,
+          error: 'Device offline'
+        };
+      }
       
-      // Obtener datos locales
+      // Obtener datos de Firebase y locales
+      const userDoc = doc(db, 'chinese_flashcards', this.currentUser);
+      const docSnap = await getDoc(userDoc);
+      
+      let firebaseData = {};
+      if (docSnap.exists()) {
+        firebaseData = docSnap.data();
+      }
+      
       const [localDecks, localCards, localProgress] = await Promise.all([
         OfflineStorage.getDecks(),
         OfflineStorage.getCards(),
         OfflineStorage.getProgress()
       ]);
       
-      // Merger datos (priorizar los más recientes)
-      const mergedDecks = this.mergeDecks(firebaseDecks, localDecks);
-      const mergedCards = this.mergeCards(firebaseCards, localCards);
-      const mergedProgress = this.mergeProgress(firebaseProgress, localProgress);
+      // Mergear datos (priorizar Firebase si existe)
+      const mergedDecks = this.mergeDecks(firebaseData.decks || [], localDecks);
+      const mergedCards = this.mergeCards(firebaseData.cards || [], localCards);
+      const mergedProgress = this.mergeProgress(firebaseData.progress || {}, localProgress);
       
       // Sincronizar datos merged
       await Promise.all([
@@ -234,7 +315,7 @@ export const FirebaseSync = {
         this.syncProgress(mergedProgress)
       ]);
       
-      console.log('Full sync completed successfully');
+      console.log('✅ Full sync completed successfully');
       
       return {
         success: true,
@@ -243,7 +324,7 @@ export const FirebaseSync = {
         progress: mergedProgress
       };
     } catch (error) {
-      console.error('Error during full sync:', error);
+      console.error('❌ Error during full sync:', error);
       
       // Retornar datos locales si falla la sincronización
       const localDecks = await OfflineStorage.getDecks();
@@ -260,7 +341,7 @@ export const FirebaseSync = {
     }
   },
 
-  // NUEVO: Función para mergear mazos
+  // FUNCIONES DE MERGE
   mergeDecks(firebaseDecks, localDecks) {
     const merged = new Map();
     
@@ -280,7 +361,6 @@ export const FirebaseSync = {
     return Array.from(merged.values());
   },
 
-  // Función para mergear cartas (ACTUALIZADA para incluir deckId)
   mergeCards(firebaseCards, localCards) {
     const merged = new Map();
     
@@ -310,7 +390,6 @@ export const FirebaseSync = {
     return Array.from(merged.values());
   },
 
-  // Función para mergear progreso
   mergeProgress(firebaseProgress, localProgress) {
     const merged = { ...localProgress };
     
@@ -328,64 +407,38 @@ export const FirebaseSync = {
     return merged;
   },
 
-  // Utilidades
-  async isOnline() {
-    try {
-      // Intento simple de conectividad
-      await mockFirebase.get('test');
-      return true;
-    } catch (error) {
-      return false;
-    }
-  },
-
-  async clearUserData() {
-    try {
-      if (!this.isInitialized) return false;
-      
-      await Promise.all([
-        mockFirebase.set(`users/${this.currentUser}/decks`, {}),
-        mockFirebase.set(`users/${this.currentUser}/cards`, {}),
-        mockFirebase.set(`users/${this.currentUser}/progress`, {})
-      ]);
-      
-      console.log('Firebase user data cleared');
-      return true;
-    } catch (error) {
-      console.error('Error clearing Firebase data:', error);
-      return false;
-    }
-  },
-
-  // NUEVO: Migración de datos existentes
+  // MIGRACIÓN Y UTILIDADES
   async migrateToDecksSystem() {
     try {
-      const cards = await this.getCards();
-      const cardsNeedingMigration = cards.filter(card => !card.deckId);
-      
-      if (cardsNeedingMigration.length === 0) {
-        console.log('No cards need migration');
+      // Verificar si ya hay mazos
+      const decks = await OfflineStorage.getDecks();
+      if (decks.length > 0) {
+        console.log('✅ Decks system already migrated');
         return true;
       }
       
-      // Crear mazo por defecto si no existe
-      const decks = await this.getDecks();
-      let defaultDeck = decks.find(deck => deck.id === 'default');
+      // Verificar si hay cartas que necesitan migración
+      const cards = await OfflineStorage.getCards();
+      const cardsNeedingMigration = cards.filter(card => !card.deckId);
       
-      if (!defaultDeck) {
-        defaultDeck = {
-          id: 'default',
-          name: '📚 Mazo Principal',
-          description: 'Mazo creado automáticamente durante la migración',
-          color: '#007bff',
-          icon: '📚',
-          createdAt: new Date().toISOString(),
-          cardCount: cardsNeedingMigration.length
-        };
-        
-        const updatedDecks = [...decks, defaultDeck];
-        await this.syncDecks(updatedDecks);
+      if (cardsNeedingMigration.length === 0) {
+        console.log('✅ No cards need migration');
+        return true;
       }
+      
+      console.log(`🔄 Migrating ${cardsNeedingMigration.length} cards to deck system...`);
+      
+      // Crear mazo por defecto
+      const defaultDeck = {
+        id: 'default',
+        name: '📚 Mazo Principal',
+        description: 'Mazo creado automáticamente durante la migración',
+        color: '#007bff',
+        icon: '📚',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        cardCount: cardsNeedingMigration.length
+      };
       
       // Migrar cartas
       const migratedCards = cards.map(card => ({
@@ -394,33 +447,78 @@ export const FirebaseSync = {
         deckName: card.deckName || '📚 Mazo Principal'
       }));
       
-      await this.syncCards(migratedCards);
+      // Guardar localmente primero
+      await OfflineStorage.saveDecks([defaultDeck]);
+      await OfflineStorage.saveCards(migratedCards);
       
-      console.log(`Migrated ${cardsNeedingMigration.length} cards to deck system`);
+      // Sincronizar con Firebase si está online
+      if (await this.isOnline()) {
+        await this.syncDecks([defaultDeck]);
+        await this.syncCards(migratedCards);
+      }
+      
+      console.log(`✅ Migration completed successfully`);
       return true;
     } catch (error) {
-      console.error('Error during migration:', error);
+      console.error('❌ Error during migration:', error);
       return false;
+    }
+  },
+
+  // Limpiar datos del usuario
+  async clearUserData() {
+    try {
+      if (!this.isInitialized) return false;
+      
+      console.log('🗑️ Clearing user data from Firebase...');
+      
+      const userDoc = doc(db, 'chinese_flashcards', this.currentUser);
+      await setDoc(userDoc, {
+        decks: [],
+        cards: [],
+        progress: {},
+        lastUpdated: serverTimestamp()
+      });
+      
+      console.log('✅ Firebase user data cleared');
+      return true;
+    } catch (error) {
+      console.error('❌ Error clearing Firebase data:', error);
+      return false;
+    }
+  },
+
+  // Obtener información del usuario
+  async getUserInfo() {
+    try {
+      if (!this.isInitialized) await this.initializeUser();
+      
+      const userDoc = doc(db, 'chinese_flashcards', this.currentUser);
+      const docSnap = await getDoc(userDoc);
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        return {
+          userId: this.currentUser,
+          decksCount: (data.decks || []).length,
+          cardsCount: (data.cards || []).length,
+          progressCount: Object.keys(data.progress || {}).length,
+          lastUpdated: data.lastUpdated?.toDate?.() || null
+        };
+      }
+      
+      return {
+        userId: this.currentUser,
+        decksCount: 0,
+        cardsCount: 0,
+        progressCount: 0,
+        lastUpdated: null
+      };
+    } catch (error) {
+      console.error('❌ Error getting user info:', error);
+      return null;
     }
   }
 };
-
-// Configuración para entorno real de Firebase
-// Descomenta y configura según tu proyecto
-/*
-import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
-import { getAuth, signInAnonymously } from 'firebase/auth';
-
-const firebaseConfig = {
-  // Tu configuración de Firebase aquí
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
-
-// Implementación real de Firebase aquí...
-*/
 
 export default FirebaseSync;
