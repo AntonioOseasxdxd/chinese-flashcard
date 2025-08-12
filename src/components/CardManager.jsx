@@ -6,14 +6,14 @@ const CardManager = ({
   onAddCard, 
   onDeleteCard, 
   onEditCard,
-  // Props para el sistema de mazos
   decks,
   currentDeck,
   onAddDeck,
   onSwitchDeck,
-  onEditDeck,    // NUEVA PROP
-  onDeleteDeck,  // NUEVA PROP
-  loading
+  onEditDeck,
+  onDeleteDeck,
+  loading,
+  
 }) => {
   const [showForm, setShowForm] = useState(false);
   const [editingCard, setEditingCard] = useState(null);
@@ -120,6 +120,7 @@ const CardManager = ({
   };
 
   // Crear nuevo mazo personalizado
+  
   const handleCreateCustomDeck = async (e) => {
     e.preventDefault();
     if (!newDeck.name.trim()) {

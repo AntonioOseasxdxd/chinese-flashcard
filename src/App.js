@@ -1,4 +1,4 @@
-// src/App.js - Actualizado para incluir editar y eliminar mazos
+// src/App.js - Actualizado para incluir sistema completo de toasts
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import './App.css';
@@ -33,6 +33,29 @@ function App() {
   const [showDataInitializer, setShowDataInitializer] = useState(false);
   const [showClearData, setShowClearData] = useState(false);
   const [showDeckManager, setShowDeckManager] = useState(false);
+
+  // ============================================
+  // SISTEMA DE TOASTS
+  // ============================================
+  const [toasts, setToasts] = useState([]);
+
+  // Función para agregar toast
+  const addToast = (message, type = 'info', duration = 4000) => {
+    const id = Date.now() + Math.random();
+    const newToast = { id, message, type, duration };
+    
+    setToasts(prev => [...prev, newToast]);
+    
+    // Auto-remove toast after duration
+    setTimeout(() => {
+      removeToast(id);
+    }, duration);
+  };
+
+  // Función para remover toast
+  const removeToast = (id) => {
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+  };
 
   // Usar el hook de Firebase con manejo defensivo
   const hookData = useFlashcards();
@@ -161,9 +184,11 @@ function App() {
   const handleManualSync = async () => {
     try {
       await syncWithFirebase();
+      addToast('✅ Sincronización completada exitosamente', 'success');
       console.log('Manual sync completed');
     } catch (error) {
       console.error('Manual sync failed:', error);
+      addToast(`❌ Error en la sincronización: ${error.message}`, 'error');
     }
   };
 
@@ -171,38 +196,48 @@ function App() {
   const handleDeckChange = async (deck) => {
     try {
       await switchDeck(deck);
+      addToast(`📂 Cambiado a mazo "${deck?.name || 'Todos los mazos'}"`, 'info');
       console.log('Switched to deck:', deck?.name || 'Unknown');
     } catch (error) {
       console.error('Error switching deck:', error);
+      addToast(`❌ Error al cambiar de mazo: ${error.message}`, 'error');
     }
   };
 
-  // Manejar creación de mazo - FUNCIÓN CORREGIDA
+  // ============================================
+  // FUNCIONES MEJORADAS CON TOASTS
+  // ============================================
+
+  // Manejar creación de mazo - FUNCIÓN CON TOASTS
   const handleCreateDeck = async (deckData) => {
     try {
       const createdDeck = await addDeck(deckData);
       console.log('Deck created:', deckData?.name || 'Unknown');
       setShowDeckManager(false);
-      return createdDeck; // Importante: devolver el mazo creado
+      addToast(`✅ Mazo "${deckData.name}" creado exitosamente!`, 'success');
+      return createdDeck;
     } catch (error) {
       console.error('Error creating deck:', error);
-      throw error; // Re-lanzar el error para que CardManager lo maneje
+      addToast(`❌ Error al crear el mazo: ${error.message}`, 'error');
+      throw error;
     }
   };
 
-  // NUEVA FUNCIÓN: Manejar edición de mazo
+  // NUEVA FUNCIÓN: Manejar edición de mazo - CON TOASTS
   const handleEditDeck = async (deckId, deckData) => {
     try {
       const updatedDeck = await updateDeck(deckId, deckData);
       console.log('Deck updated:', deckData?.name || 'Unknown');
+      addToast(`✅ Mazo "${deckData.name}" actualizado exitosamente!`, 'success');
       return updatedDeck;
     } catch (error) {
       console.error('Error updating deck:', error);
-      throw error; // Re-lanzar el error para que CardManager lo maneje
+      addToast(`❌ Error al actualizar el mazo: ${error.message}`, 'error');
+      throw error;
     }
   };
 
-  // NUEVA FUNCIÓN: Manejar eliminación de mazo
+  // NUEVA FUNCIÓN: Manejar eliminación de mazo - CON TOASTS
   const handleDeleteDeck = async (deckId) => {
     try {
       // Obtener información del mazo antes de eliminarlo
@@ -219,11 +254,13 @@ function App() {
       // Eliminar el mazo
       await deleteDeck(deckId);
       console.log('Deck and its cards deleted:', deckToDelete?.name || 'Unknown');
+      addToast(`🗑️ Mazo "${deckToDelete?.name}" eliminado exitosamente`, 'success');
       
       return true;
     } catch (error) {
       console.error('Error deleting deck:', error);
-      throw error; // Re-lanzar el error para que CardManager lo maneje
+      addToast(`❌ Error al eliminar el mazo: ${error.message}`, 'error');
+      throw error;
     }
   };
 
@@ -231,9 +268,12 @@ function App() {
   const handleMoveCardToDeck = async (cardId, deckId) => {
     try {
       await moveCardToDeck(cardId, deckId);
+      const targetDeck = decks.find(deck => deck.id === deckId);
+      addToast(`📋 Carta movida a "${targetDeck?.name || 'mazo desconocido'}"`, 'success');
       console.log(`Card ${cardId} moved to deck ${deckId}`);
     } catch (error) {
       console.error('Error moving card to deck:', error);
+      addToast(`❌ Error al mover la carta: ${error.message}`, 'error');
     }
   };
 
@@ -241,6 +281,7 @@ function App() {
   const handleDataCleared = () => {
     console.log('All data cleared!');
     setShowClearData(false);
+    addToast('🗑️ Todos los datos han sido eliminados', 'warning', 3000);
     // La página se recargará automáticamente
   };
 
@@ -521,14 +562,15 @@ function App() {
                   currentDeck={currentDeck}
                   onAddDeck={handleCreateDeck}
                   onSwitchDeck={handleDeckChange}
-                  onEditDeck={handleEditDeck}    // ✅ NUEVA PROP AGREGADA
-                  onDeleteDeck={handleDeleteDeck} // ✅ NUEVA PROP AGREGADA
+                  onEditDeck={handleEditDeck}
+                  onDeleteDeck={handleDeleteDeck}
                   loading={loading}
                   // Props adicionales
                   onMoveCardToDeck={handleMoveCardToDeck}
                   isOnline={isOnline}
                   syncing={syncing}
                   userProgress={userProgress}
+                  addToast={addToast}
                 />
               }
             />
@@ -536,6 +578,118 @@ function App() {
         </main>
 
         <Navigation />
+
+        {/* ============================================ */}
+        {/* SISTEMA DE TOASTS - CONTENEDOR */}
+        {/* ============================================ */}
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          zIndex: 9999,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px'
+        }}>
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              onClick={() => removeToast(toast.id)}
+              style={{
+                background: toast.type === 'success' ? 'linear-gradient(135deg, #28a745, #34d058)' :
+                           toast.type === 'error' ? 'linear-gradient(135deg, #dc3545, #fd5a6e)' :
+                           toast.type === 'warning' ? 'linear-gradient(135deg, #ffc107, #ffd43b)' :
+                           'linear-gradient(135deg, #17a2b8, #20c7db)',
+                color: toast.type === 'warning' ? '#000' : 'white',
+                padding: '16px 20px',
+                borderRadius: '12px',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)',
+                backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                cursor: 'pointer',
+                minWidth: '300px',
+                maxWidth: '400px',
+                animation: 'slideIn 0.3s ease-out',
+                fontSize: '14px',
+                fontWeight: '500',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                wordBreak: 'break-word',
+                transform: 'translateX(0)',
+                transition: 'all 0.3s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.transform = 'translateX(-5px) scale(1.02)';
+                e.target.style.boxShadow = '0 12px 40px rgba(0, 0, 0, 0.3)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.transform = 'translateX(0) scale(1)';
+                e.target.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.2)';
+              }}
+            >
+              <span style={{ fontSize: '18px' }}>
+                {toast.type === 'success' ? '✅' :
+                 toast.type === 'error' ? '❌' :
+                 toast.type === 'warning' ? '⚠️' : 'ℹ️'}
+              </span>
+              <div style={{ flex: 1 }}>
+                {toast.message}
+              </div>
+              <span style={{ 
+                fontSize: '12px', 
+                opacity: 0.8,
+                marginLeft: 'auto',
+                paddingLeft: '8px'
+              }}>
+                ✕
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* ============================================ */}
+        {/* ESTILOS CSS PARA TOASTS */}
+        {/* ============================================ */}
+        <style>{`
+          @keyframes slideIn {
+            from {
+              transform: translateX(100%);
+              opacity: 0;
+            }
+            to {
+              transform: translateX(0);
+              opacity: 1;
+            }
+          }
+          
+          @keyframes slideOut {
+            from {
+              transform: translateX(0);
+              opacity: 1;
+            }
+            to {
+              transform: translateX(100%);
+              opacity: 0;
+            }
+          }
+
+          /* Responsive Toast Styles */
+          @media (max-width: 768px) {
+            .toast-container {
+              top: 10px !important;
+              right: 10px !important;
+              left: 10px !important;
+              align-items: stretch !important;
+            }
+            
+            .toast-container > div {
+              min-width: unset !important;
+              max-width: unset !important;
+              width: 100% !important;
+            }
+          }
+        `}</style>
       </div>
     </Router>
   );
