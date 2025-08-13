@@ -98,7 +98,7 @@ const CardManager = ({
   const availableIcons = ['📚', '🎯', '🧠', '💡', '🚀', '⭐', '🔥', '💪', '🎨', '🔬','⛩️'];
   const availableColors = [
     '#007bff', '#28a745', '#dc3545', '#ffc107', 
-    '#6f42c1', '#fd7e14', '#20c997', '#e83e8c'
+    '#6f42c1', '#fd7e14', '#20c997', '#e83e8c','#00bcd4 ','#8bc34a'
   ];
 
   // Crear mazo automáticamente si no existen
