@@ -1,4 +1,4 @@
-// src/hooks/useFlashcards.js - EJEMPLO DE INTEGRACIÓN CORREGIDA
+// src/hooks/useFlashcards.js - INTEGRACIÓN CORREGIDA
 import { useState, useEffect, useCallback } from 'react';
 import { useDecks } from './useDecks';
 import { SpacedRepetition } from '../services/spacedRepetition';
@@ -224,20 +224,31 @@ export const useFlashcards = () => {
     }
   }, [progress, isOnline]);
 
+  // 🔧 FUNCIÓN CORREGIDA: markCardReviewed
   const markCardReviewed = useCallback(async (cardId, correct = true, difficulty = null) => {
     try {
       const card = cards.find(c => c.id === cardId);
-      if (!card) return;
+      if (!card) {
+        console.error(`Card not found: ${cardId}`);
+        return;
+      }
 
-      const currentProgress = progress[cardId] || { correct: 0, incorrect: 0, reviewCount: 0 };
+      const currentProgress = progress[cardId] || { 
+        correct: 0, 
+        incorrect: 0, 
+        reviewCount: 0,
+        repetitions: 0,
+        easeFactor: 2.5,
+        interval: 1
+      };
       
-      // Usar SpacedRepetition para calcular el nuevo intervalo
-      const spaceData = SpacedRepetition.calculateNextReview(
-        card,
-        currentProgress,
-        correct,
-        difficulty
-      );
+      // 🔧 FIX: Usar la función correcta con parámetros apropiados
+      const quality = difficulty 
+        ? SpacedRepetition.userRatingToQuality(difficulty)
+        : SpacedRepetition.booleanToQuality(correct);
+
+      // 🔧 FIX: Usar updateCardProgress con el progreso actual y calidad
+      const spaceData = SpacedRepetition.updateCardProgress(currentProgress, quality);
 
       const updatedProgressData = {
         ...currentProgress,
@@ -245,7 +256,7 @@ export const useFlashcards = () => {
         incorrect: currentProgress.incorrect + (correct ? 0 : 1),
         reviewCount: currentProgress.reviewCount + 1,
         lastReviewed: new Date().toISOString(),
-        ...spaceData
+        ...spaceData // Esto incluye interval, repetitions, easeFactor, nextReview
       };
 
       await updateProgress(cardId, updatedProgressData);
@@ -260,8 +271,87 @@ export const useFlashcards = () => {
         isNew: false
       });
 
+      console.log(`Card ${cardId} reviewed:`, {
+        correct,
+        difficulty,
+        quality,
+        newInterval: spaceData.interval,
+        newRepetitions: spaceData.repetitions,
+        nextReview: spaceData.nextReview
+      });
+
     } catch (error) {
       console.error('Error marking card as reviewed:', error);
+      throw error;
+    }
+  }, [cards, progress, updateProgress, updateCard]);
+
+  // 🆕 NUEVA FUNCIÓN: markCardReviewedAdvanced para más control
+  const markCardReviewedAdvanced = useCallback(async (cardId, userRating) => {
+    try {
+      const card = cards.find(c => c.id === cardId);
+      if (!card) {
+        console.error(`Card not found: ${cardId}`);
+        return;
+      }
+
+      const currentProgress = progress[cardId] || { 
+        correct: 0, 
+        incorrect: 0, 
+        reviewCount: 0,
+        repetitions: 0,
+        easeFactor: 2.5,
+        interval: 1
+      };
+      
+      // Convertir rating del usuario a calidad SM-2
+      const quality = SpacedRepetition.userRatingToQuality(userRating);
+      const isCorrect = quality >= 3; // 3 o más se considera correcto
+
+      // Calcular nuevo progreso usando spaced repetition
+      const spaceData = SpacedRepetition.updateCardProgress(currentProgress, quality);
+
+      const updatedProgressData = {
+        ...currentProgress,
+        correct: currentProgress.correct + (isCorrect ? 1 : 0),
+        incorrect: currentProgress.incorrect + (isCorrect ? 0 : 1),
+        reviewCount: currentProgress.reviewCount + 1,
+        lastReviewed: new Date().toISOString(),
+        lastRating: userRating,
+        lastQuality: quality,
+        ...spaceData
+      };
+
+      await updateProgress(cardId, updatedProgressData);
+
+      // Actualizar tarjeta
+      await updateCard(cardId, {
+        lastReviewed: new Date().toISOString(),
+        nextReview: spaceData.nextReview,
+        interval: spaceData.interval,
+        easeFactor: spaceData.easeFactor,
+        repetitions: spaceData.repetitions,
+        isNew: false
+      });
+
+      console.log(`Card ${cardId} reviewed with rating "${userRating}":`, {
+        quality,
+        isCorrect,
+        newInterval: spaceData.interval,
+        newRepetitions: spaceData.repetitions,
+        nextReview: spaceData.nextReview
+      });
+
+      return {
+        success: true,
+        quality,
+        isCorrect,
+        newInterval: spaceData.interval,
+        nextReview: spaceData.nextReview
+      };
+
+    } catch (error) {
+      console.error('Error marking card as reviewed (advanced):', error);
       throw error;
     }
   }, [cards, progress, updateProgress, updateCard]);
@@ -288,6 +378,15 @@ export const useFlashcards = () => {
   const getGlobalStats = useCallback(() => {
     return SpacedRepetition.getLearningStats(cards, progress);
   }, [cards, progress]);
+
+  // 🆕 NUEVA FUNCIÓN: getDetailedMetrics
+  const getDetailedMetrics = useCallback((deckId = null) => {
+    const targetCards = deckId 
+      ? cards.filter(card => card.deckId === deckId)
+      : getCurrentDeckCards();
+    
+    return SpacedRepetition.getDetailedMetrics(targetCards, progress);
+  }, [cards, progress, getCurrentDeckCards]);
 
   const getCardsByCategory = useCallback(() => {
     // Implementar lógica de categorización si es necesaria
@@ -334,6 +433,46 @@ export const useFlashcards = () => {
     await Promise.all(deckCards.map(card => deleteCard(card.id)));
   }, [cards, deleteCard]);
 
+  // 🆕 NUEVA FUNCIÓN: resetCardProgress (para casos especiales)
+  const resetCardProgress = useCallback(async (cardId) => {
+    try {
+      const card = cards.find(c => c.id === cardId);
+      if (!card) {
+        throw new Error('Card not found');
+      }
+
+      // Resetear progreso
+      const resetProgress = {
+        correct: 0,
+        incorrect: 0,
+        reviewCount: 0,
+        repetitions: 0,
+        easeFactor: 2.5,
+        interval: 1,
+        lastReviewed: null,
+        nextReview: new Date().toISOString(),
+        isNew: true,
+        resetAt: new Date().toISOString()
+      };
+
+      await updateProgress(cardId, resetProgress);
+      await updateCard(cardId, {
+        lastReviewed: null,
+        nextReview: new Date().toISOString(),
+        interval: 1,
+        easeFactor: 2.5,
+        repetitions: 0,
+        isNew: true
+      });
+
+      console.log(`Progress reset for card ${cardId}`);
+      return true;
+    } catch (error) {
+      console.error('Error resetting card progress:', error);
+      throw error;
+    }
+  }, [cards, updateProgress, updateCard]);
+
   return {
     // Estados
     cards,
@@ -352,6 +491,8 @@ export const useFlashcards = () => {
     deleteCard,
     updateProgress,
     markCardReviewed,
+    markCardReviewedAdvanced, // 🆕 NUEVA
+    resetCardProgress, // 🆕 NUEVA
     moveCardToDeck,
     deleteCardsFromDeck,
 
@@ -367,6 +508,7 @@ export const useFlashcards = () => {
     getCardsForReview,
     getStats,
     getGlobalStats,
+    getDetailedMetrics, // 🆕 NUEVA
     getDeckById,
     getDecksWithStats,
     

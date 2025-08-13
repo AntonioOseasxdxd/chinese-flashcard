@@ -1,4 +1,4 @@
-// src/services/spacedRepetition.js
+// src/services/spacedRepetition.js - VERSIÓN CORREGIDA
 
 export class SpacedRepetition {
   /**
@@ -23,13 +23,15 @@ export class SpacedRepetition {
     } else {
       newRepetitions = repetitions + 1;
 
-      // Calcular el intervalo basado en el número de repeticiones
+      // 🔧 CORRECCIÓN: Calcular el intervalo correctamente
       if (newRepetitions === 1) {
         newInterval = 1;
       } else if (newRepetitions === 2) {
         newInterval = 6;
       } else {
-        newInterval = Math.round(newInterval * newEaseFactor);
+        // 🔧 FIX: Usar el intervalo anterior real, no el inicial
+        const previousInterval = repetitions === 1 ? 1 : repetitions === 2 ? 6 : Math.round(6 * Math.pow(newEaseFactor, newRepetitions - 2));
+        newInterval = Math.round(previousInterval * newEaseFactor);
       }
     }
 
@@ -37,6 +39,52 @@ export class SpacedRepetition {
       interval: newInterval,
       repetitions: newRepetitions,
       easeFactor: newEaseFactor
+    };
+  }
+
+  /**
+   * 🆕 NUEVA FUNCIÓN: Calcula intervalo mejorado con historial
+   * @param {Object} cardProgress - Progreso actual de la carta
+   * @param {number} quality - Calidad de la respuesta (0-5)
+   * @returns {Object} - Nuevo progreso calculado
+   */
+  static calculateNextReviewImproved(cardProgress = {}, quality = 3) {
+    const currentRepetitions = cardProgress.repetitions || 0;
+    const currentEaseFactor = cardProgress.easeFactor || 2.5;
+    const currentInterval = cardProgress.interval || 1;
+
+    let newInterval = 1;
+    let newRepetitions = currentRepetitions;
+    let newEaseFactor = currentEaseFactor;
+
+    // Ajustar el factor de facilidad basado en la calidad de la respuesta
+    newEaseFactor = Math.max(1.3, currentEaseFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)));
+
+    // Si la calidad es menor a 3, reiniciar las repeticiones
+    if (quality < 3) {
+      newRepetitions = 0;
+      newInterval = 1;
+    } else {
+      newRepetitions = currentRepetitions + 1;
+
+      // Calcular el intervalo usando el historial real
+      if (newRepetitions === 1) {
+        newInterval = 1;
+      } else if (newRepetitions === 2) {
+        newInterval = 6;
+      } else {
+        // Usar el intervalo anterior real de la tarjeta
+        newInterval = Math.round(currentInterval * newEaseFactor);
+      }
+    }
+
+    return {
+      interval: newInterval,
+      repetitions: newRepetitions,
+      easeFactor: newEaseFactor,
+      lastReviewed: new Date(),
+      nextReview: this.getNextReviewDate(newInterval),
+      isNew: false
     };
   }
 
@@ -80,31 +128,14 @@ export class SpacedRepetition {
   }
 
   /**
-   * Actualiza el progreso de una carta después de la revisión
+   * 🔧 CORREGIDA: Actualiza el progreso de una carta después de la revisión
    * @param {Object} cardProgress - Progreso actual de la carta
    * @param {number} quality - Calidad de la respuesta (0-5)
    * @returns {Object} - Nuevo progreso de la carta
    */
   static updateCardProgress(cardProgress = {}, quality) {
-    const currentRepetitions = cardProgress.repetitions || 0;
-    const currentEaseFactor = cardProgress.easeFactor || 2.5;
-    const currentInterval = cardProgress.interval || 1;
-
-    const { interval, repetitions, easeFactor } = this.calculateNextReview(
-      currentRepetitions,
-      currentEaseFactor,
-      quality
-    );
-
-    return {
-      ...cardProgress,
-      interval,
-      repetitions,
-      easeFactor,
-      lastReviewed: new Date(),
-      nextReview: this.getNextReviewDate(interval),
-      isNew: false
-    };
+    // 🔧 FIX: Usar la función mejorada que maneja correctamente el historial
+    return this.calculateNextReviewImproved(cardProgress, quality);
   }
 
   /**
@@ -124,6 +155,22 @@ export class SpacedRepetition {
   }
 
   /**
+   * 🆕 NUEVA: Convierte boolean a calidad SM-2 (para compatibilidad)
+   * @param {boolean} correct - Si la respuesta fue correcta
+   * @param {string} difficulty - Dificultad percibida ('easy', 'hard', etc.)
+   * @returns {number} - Calidad en escala 0-5
+   */
+  static booleanToQuality(correct, difficulty = null) {
+    if (!correct) return 0; // Incorrect = quality 0
+    
+    if (difficulty) {
+      return this.userRatingToQuality(difficulty);
+    }
+    
+    return 3; // Default to "good" quality
+  }
+
+  /**
    * Obtiene estadísticas de aprendizaje
    * @param {Array} cards - Array de cartas
    * @param {Object} userProgress - Progreso del usuario
@@ -135,8 +182,11 @@ export class SpacedRepetition {
       new: 0,
       learning: 0,
       review: 0,
-      mastered: 0
+      mastered: 0,
+      overdue: 0 // 🆕 NUEVA estadística
     };
+
+    const now = new Date();
 
     cards.forEach(card => {
       const progress = userProgress[card.id];
@@ -147,12 +197,82 @@ export class SpacedRepetition {
         stats.learning++;
       } else if (progress.repetitions < 3) {
         stats.review++;
+        
+        // 🆕 Verificar si está vencida
+        if (progress.nextReview && new Date(progress.nextReview) < now) {
+          stats.overdue++;
+        }
       } else {
         stats.mastered++;
       }
     });
 
     return stats;
+  }
+
+  /**
+   * 🆕 NUEVA: Obtiene métricas detalladas de rendimiento
+   * @param {Array} cards - Array de cartas  
+   * @param {Object} userProgress - Progreso del usuario
+   * @returns {Object} - Métricas detalladas
+   */
+  static getDetailedMetrics(cards, userProgress = {}) {
+    const metrics = {
+      totalCards: cards.length,
+      totalReviews: 0,
+      correctAnswers: 0,
+      incorrectAnswers: 0,
+      accuracy: 0,
+      averageEaseFactor: 0,
+      averageInterval: 0,
+      cardsPerDifficulty: {
+        easy: 0,
+        medium: 0,
+        hard: 0
+      },
+      progressDistribution: this.getLearningStats(cards, userProgress)
+    };
+
+    let totalEaseFactor = 0;
+    let totalInterval = 0;
+    let cardsWithProgress = 0;
+
+    cards.forEach(card => {
+      const progress = userProgress[card.id];
+      
+      // Contar por dificultad
+      if (card.difficulty) {
+        metrics.cardsPerDifficulty[card.difficulty] = 
+          (metrics.cardsPerDifficulty[card.difficulty] || 0) + 1;
+      }
+      
+      if (progress) {
+        metrics.totalReviews += progress.reviewCount || 0;
+        metrics.correctAnswers += progress.correct || 0;
+        metrics.incorrectAnswers += progress.incorrect || 0;
+        
+        if (progress.easeFactor) {
+          totalEaseFactor += progress.easeFactor;
+          cardsWithProgress++;
+        }
+        
+        if (progress.interval) {
+          totalInterval += progress.interval;
+        }
+      }
+    });
+
+    // Calcular promedios
+    if (metrics.totalReviews > 0) {
+      metrics.accuracy = (metrics.correctAnswers / (metrics.correctAnswers + metrics.incorrectAnswers)) * 100;
+    }
+    
+    if (cardsWithProgress > 0) {
+      metrics.averageEaseFactor = totalEaseFactor / cardsWithProgress;
+      metrics.averageInterval = totalInterval / cardsWithProgress;
+    }
+
+    return metrics;
   }
 }
 

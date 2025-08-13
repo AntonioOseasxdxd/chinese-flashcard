@@ -1,13 +1,56 @@
+/* src/index.css - Versión corregida */
+html {
+  box-sizing: border-box;
+  overflow-x: hidden;
+  width: 100%;
+}
+
+*, *:before, *:after {
+  box-sizing: inherit;
+}
+
 body {
   margin: 0;
+  padding: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+  width: 100%;
+  position: relative;
 }
 
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
+}
+
+/* Asegurar que todos los elementos no excedan el viewport */
+* {
+  max-width: 100%;
+}
+
+/* Prevenir scroll horizontal en elementos específicos */
+img, video, iframe, embed, object {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Mejorar el rendimiento de las transiciones */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Asegurar que flexbox no cause overflow */
+.flex-container {
+  min-width: 0;
+}
+
+/* Prevenir problemas con texto largo */
+p, h1, h2, h3, h4, h5, h6, span, div {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
